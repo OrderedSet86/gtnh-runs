@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GTNH Runs</title>
-<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=23c20ca329fe">
+<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=05a83fc07f0d">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -98,7 +98,14 @@ let runs = [];
 let sortKey = 'endDate';
 let descending = true;
 
-const fmtIgt = (days) => (days >= 3 ? `day ${days.toFixed(2)} (${(days * 24).toFixed(1)} h)` : `${(days * 24).toFixed(2)} h`);
+// an IGT time in whole minutes, the largest unit first: 34min, 19hr 34min, 2d 3hr 5min. base_3d_page.html and
+// scripts/publish_run.py write times the same way
+const fmtIgt = (days) => {
+  const minutes = Math.round(days * 1440);
+  const d = Math.floor(minutes / 1440), h = Math.floor((minutes % 1440) / 60), m = minutes % 60;
+  if (d) return `${d}d ${h}hr ${m}min`;
+  return h ? `${h}hr ${m}min` : `${m}min`;
+};
 const sortValue = (run, key) => {
   if (key === 'runner') return run.runners.join(', ').toLowerCase();
   if (key === 'audit') return run.auditVersions.at(-1) ?? '';

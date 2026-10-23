@@ -8,8 +8,8 @@
 <meta property="og:site_name" content="GTNH runs">
 <meta property="og:url" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/">
 <meta property="og:title" content="NekoNou: Moon">
-<meta property="og:description" content="In-game time (IGT) 3D progression timelapse. Reached Moon at 19.54 h IGT.">
-<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=23c20ca329fe">
+<meta property="og:description" content="In-game time (IGT) 3D progression timelapse. Reached Moon at 19hr 32min IGT.">
+<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=05a83fc07f0d">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -123,9 +123,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 <div class="panel timeline">
   <div class="time">
     <button class="plain" id="play" type="button" aria-label="Play"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.5 L13.5 8 L5 13.5 Z" fill="currentColor"/></svg></button>
-    <button class="plain" id="back" type="button" aria-label="Back one IGT hour">−1 h</button>
+    <button class="plain" id="back" type="button" aria-label="Back one IGT hour">−1hr</button>
     <input id="slider" type="range" min="0" max="1000" step="1" aria-label="IGT (in-game time)">
-    <button class="plain" id="fwd" type="button" aria-label="Forward one IGT hour">+1 h</button>
+    <button class="plain" id="fwd" type="button" aria-label="Forward one IGT hour">+1hr</button>
     <output id="when"></output>
   </div>
 </div>
@@ -179,11 +179,14 @@ if (DATA.milestone) runParts.push(`Milestone: ${DATA.milestone}`);
 document.getElementById('run').textContent = runParts.join(' | ');
 document.getElementById('run').hidden = !runParts.length;
 // on the gtnh-runs site (scripts/publish_run.py) the run list is two folders up. Elsewhere the link stays hidden.
-// The list must parse as a JSON array, because some hosts answer a missing path with a page and status 200
-fetch('../../runs.json')
-  .then((response) => response.json())
-  .then((runs) => { document.getElementById('home').hidden = !Array.isArray(runs); })
-  .catch(() => {});
+// The list must parse as a JSON array, because some hosts answer a missing path with a page and status 200.
+// From disk there is no site, and Chrome logs an error for any fetch of a file:// URL
+if (location.protocol !== 'file:') {
+  fetch('../../runs.json')
+    .then((response) => response.json())
+    .then((runs) => { document.getElementById('home').hidden = !Array.isArray(runs); })
+    .catch(() => {});
+}
 // tier order and colors match the 2D base map of the charts dashboard. Not logged and No tier get the Stone grey
 const TIERS = ['Stone', 'Steam', 'ULV', 'LV', 'MV', 'HV', 'EV', 'IV', 'LuV', 'ZPM', 'UV', 'UHV', 'UEV', 'UIV', 'UMV', 'UXV', 'MAX'];
 const TIER_LIGHT = ['#808488', '#482808', '#e60986', '#42d300', '#1a588c', '#01b2f8', '#9009b6', '#049d20', '#fe3dff', '#1b6700', '#fe81bc', '#240cf5', '#fc5f18', '#8375fd', '#9e3938', '#c6a10f'];
@@ -207,9 +210,13 @@ const isPipe = (block) => block.kind !== 'machine';
 const keyOf = (b) => `${b.x},${b.y},${b.z}`;
 const centerOf = (b) => new THREE.Vector3(b.x + 0.5, b.y + 0.5, b.z + 0.5);
 
+// an IGT time in whole minutes, the largest unit first: 34min, 19hr 34min, 2d 3hr 5min. scripts/publish_run.py's
+// formatIgt and the landing page write times the same way
 const fmtIgt = (days) => {
-  const hours = days * 24;
-  return days >= 3 ? `day ${days.toFixed(2)} (${hours.toFixed(1)} h)` : `${hours.toFixed(2)} h`;
+  const minutes = Math.round(days * 1440);
+  const d = Math.floor(minutes / 1440), h = Math.floor((minutes % 1440) / 60), m = minutes % 60;
+  if (d) return `${d}d ${h}hr ${m}min`;
+  return h ? `${h}hr ${m}min` : `${m}min`;
 };
 
 const canvas = document.getElementById('scene');
@@ -255,25 +262,56 @@ const northUp = () => {
   scheduleRender();
 };
 // the opening view faces 30° east of north, looks 45° down, and fits every block into the window between its top
-// edge and the timeline. The fit uses at most 5,000 blocks, evenly spaced in the list
+// edge and the timeline. The fit is of the 8 corners of at most 5,000 blocks, evenly spaced in the list, so a block
+// near the camera, which is large on screen, stays inside the window
 const DEFAULT_HEADING_DEG = 30;
 const ELEVATION_DEG = 45;
 const FIT_STEP = Math.max(1, Math.ceil(BLOCKS.length / 5000));
-const fitPoints = BLOCKS.filter((b, i) => i % FIT_STEP === 0).map(centerOf);
+const cornersOf = (b) => [0, 1].flatMap((dx) => [0, 1].flatMap((dy) => [0, 1].map((dz) => new THREE.Vector3(b.x + dx, b.y + dy, b.z + dz))));
+// blocks within CLUSTER_GAP of each other on every axis are one cluster
+const CLUSTER_GAP = 2;
+function clusterSizes() {
+  const byKey = new Map(BLOCKS.map((b) => [keyOf(b), b]));
+  const sizes = new Map();
+  for (const start of byKey.keys()) {
+    if (sizes.has(start)) continue;
+    const members = [start];
+    const seen = new Set(members);
+    for (let i = 0; i < members.length; i++) {
+      const b = byKey.get(members[i]);
+      for (let dx = -CLUSTER_GAP; dx <= CLUSTER_GAP; dx++) for (let dy = -CLUSTER_GAP; dy <= CLUSTER_GAP; dy++) for (let dz = -CLUSTER_GAP; dz <= CLUSTER_GAP; dz++) {
+        const key = `${b.x + dx},${b.y + dy},${b.z + dz}`;
+        if (byKey.has(key) && !seen.has(key)) { seen.add(key); members.push(key); }
+      }
+    }
+    for (const key of members) sizes.set(key, members.length);
+  }
+  return sizes;
+}
+// the points a fit keeps in the window. corners: each block's 8 corners, else its center, which lets a block near
+// the camera reach past the edge. minCluster: blocks in clusters smaller than this may leave the window
+function buildFitPoints({ corners = true, minCluster = 1 } = {}) {
+  const sizes = minCluster > 1 ? clusterSizes() : null;
+  const kept = BLOCKS.filter((b, i) => i % FIT_STEP === 0 && (!sizes || sizes.get(keyOf(b)) >= minCluster));
+  return kept.flatMap((b) => (corners ? cornersOf(b) : [centerOf(b)]));
+}
+const fitPoints = buildFitPoints();
 const screenRight = new THREE.Vector3();
 const screenUpAxis = new THREE.Vector3();
-function frameView(headingDeg) {
+// headingDeg is the compass direction the camera faces. elevationDeg is the tilt below level, under 90. fit is
+// buildFitPoints's options, which the preview image and the video of tools/scripts loosen
+function frameView(headingDeg, elevationDeg = ELEVATION_DEG, fit = null) {
   const heading = THREE.MathUtils.degToRad(headingDeg);
-  const elevation = THREE.MathUtils.degToRad(ELEVATION_DEG);
+  const elevation = THREE.MathUtils.degToRad(elevationDeg);
   const toTarget = new THREE.Vector3(Math.sin(heading) * Math.cos(elevation), -Math.sin(elevation), -Math.cos(heading) * Math.cos(elevation));
   camera.position.copy(center).sub(toTarget);
   camera.lookAt(center);
   camera.updateMatrixWorld();
   screenRight.setFromMatrixColumn(camera.matrixWorld, 0);
   screenUpAxis.setFromMatrixColumn(camera.matrixWorld, 1);
-  // the usable area in normalized device coordinates (-1 to 1): 32 px in from the sides and top, and above the
-  // timeline. The fit is of block centers, so the margin also leaves room for the near half of each block
-  const margin = 32;
+  // the usable area in normalized device coordinates (-1 to 1): 16 px in from the sides and top, and above the
+  // timeline
+  const margin = 16;
   // a hidden timeline leaves the whole height
   const timeline = document.querySelector('.timeline');
   const timelineTop = (timeline.checkVisibility() ? timeline.getBoundingClientRect().top : innerHeight) - margin;
@@ -281,7 +319,7 @@ function frameView(headingDeg) {
   const top = 1 - (2 * margin) / innerHeight, bottom = 1 - (2 * timelineTop) / innerHeight;
   const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   // each block as [right, up, toward the target], relative to the center of all blocks
-  const points = fitPoints.map((point) => {
+  const points = (fit ? buildFitPoints(fit) : fitPoints).map((point) => {
     const offset = point.clone().sub(center);
     return [offset.dot(screenRight), offset.dot(screenUpAxis), offset.dot(toTarget)];
   });
@@ -315,7 +353,8 @@ function frameView(headingDeg) {
   controls.update();
   scheduleRender();
 }
-const defaultView = () => frameView(DEFAULT_HEADING_DEG);
+// the opening view. publish_run.py's preview image passes a looser fit
+const defaultView = (fit = null) => frameView(DEFAULT_HEADING_DEG, ELEVATION_DEG, fit);
 
 const groundSize = Math.ceil(Math.max(span.x, span.z) + 16);
 const ground = new THREE.GridHelper(groundSize, groundSize);
@@ -570,7 +609,7 @@ const hover = {
   hide() { this.block = null; outline.visible = false; tip.style.display = 'none'; },
 };
 // for scripted checks in a headless browser
-window.base3d = { hover, setAt, camera, controls, northUp, defaultView, blocks: BLOCKS };
+window.base3d = { hover, setAt, camera, controls, northUp, defaultView, frameView, blocks: BLOCKS };
 
 canvas.addEventListener('pointermove', (e) => {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
