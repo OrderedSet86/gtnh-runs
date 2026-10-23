@@ -1,0 +1,14 @@
+{
+  "slug": "20261022_nekonou_moon",
+  "runners": [
+    "NekoNou"
+  ],
+  "milestone": "Moon",
+  "endDate": "2026-10-22",
+  "milestoneIgtDays": 0.8142,
+  "auditVersions": [
+    "0.7.1"
+  ],
+  "placements": 497,
+  "path": "runs/20261022_nekonou_moon/"
+}

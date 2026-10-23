@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Base 3D Timeline</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GTNH runs">
+<meta property="og:url" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/">
+<meta property="og:title" content="NekoNou: Moon">
+<meta property="og:description" content="In-game time (IGT) 3D progression timelapse. Reached Moon at 19.54 h IGT.">
+<link rel="icon" href="data:,">
+<style>
+/* layout: full-window WebGL canvas, legend panel top left, compass top right, IGT timeline along the bottom */
+:root {
+  --bg: #f6f5f1; --panel: #ffffffe8; --fg: #1d1d1b; --muted: #66645e; --line: #d8d6cf; --accent: #2a62c9; --grid: #c9c6bd; --north: #c8331f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #18181a; --panel: #242427e8; --fg: #ececea; --muted: #a3a29c; --line: #3a3a3e; --accent: #7aa7ff; --grid: #3d3d42; --north: #ff6a50;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #18181a; --panel: #242427e8; --fg: #ececea; --muted: #a3a29c; --line: #3a3a3e; --accent: #7aa7ff; --grid: #3d3d42; --north: #ff6a50;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+#scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+.panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.info { top: 12px; left: 16px; width: min(350px, calc(100% - 140px)); max-height: calc(100% - 110px); overflow-y: auto; display: grid; gap: 6px; }
+.info h1 { margin: 0; font-size: 15px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sub span { display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; background: transparent; color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; }
+.chip[aria-pressed="false"] { opacity: 0.35; }
+.chip i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chip.pipe i { width: 6px; height: 6px; border-radius: 1px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; width: max-content; }
+.seg button { border: 0; background: transparent; color: var(--muted); padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--grid); color: var(--fg); font-weight: 600; }
+.seg button:disabled { cursor: not-allowed; opacity: 0.5; }
+.compass { top: 12px; right: 16px; display: grid; justify-items: center; gap: 6px; padding: 8px; }
+.compass svg { display: block; }
+.compass .ring { fill: none; stroke: var(--line); stroke-width: 2; }
+.compass text { font-size: 11px; font-weight: 600; fill: var(--muted); text-anchor: middle; dominant-baseline: central; }
+.compass text.n { fill: var(--north); font-size: 13px; }
+.compass .needle-n { fill: var(--north); }
+.compass .needle-s { fill: var(--muted); }
+button.plain { border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 6px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+button.plain:hover { background: var(--grid); }
+.timeline { left: 16px; right: 16px; bottom: 12px; }
+.time { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.time button.plain { height: 36px; padding: 0 12px; font-size: 14px; }
+.time #play { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.time #play svg { display: block; }
+.time output { font-variant-numeric: tabular-nums; min-width: 12ch; font-size: 15px; }
+/* the seek bar: a square-edged track as tall as the buttons, filled up to the selected time (--pct, set by
+   refresh()), with a bar-shaped handle */
+#slider { flex: 1 1 200px; min-width: 120px; height: 36px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; --pct: 100%; }
+#slider::-webkit-slider-runnable-track { height: 36px; border-radius: 0; background: linear-gradient(to right, var(--accent) var(--pct), var(--grid) var(--pct)); }
+#slider::-webkit-slider-thumb { -webkit-appearance: none; width: 8px; height: 36px; border-radius: 0; background: var(--fg); }
+#slider::-moz-range-track { height: 36px; border-radius: 0; background: var(--grid); }
+#slider::-moz-range-progress { height: 36px; border-radius: 0; background: var(--accent); }
+#slider::-moz-range-thumb { width: 8px; height: 36px; border: 0; border-radius: 0; background: var(--fg); }
+#slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.limits { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 6px; }
+.limits summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+.limits ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.credit { color: var(--muted); font-size: 11px; }
+.info a { color: var(--accent); }
+.home { font-size: 12px; font-weight: 600; text-decoration: none; width: max-content; }
+.home:hover { text-decoration: underline; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-variant-numeric: tabular-nums; display: none; max-width: 320px; }
+#tip b { font-size: 13px; }
+#tip .m { color: var(--muted); }
+@media (max-width: 640px) { .info { left: 8px; } .compass { right: 8px; } .timeline { left: 8px; right: 8px; bottom: 8px; } }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="panel info">
+  <a class="home" id="home" href="../../" hidden>← All runs</a>
+  <h1>In-game Time (IGT) 3D Progression Timelapse</h1>
+  <div class="sub" id="run"></div>
+  <div class="sub" id="summary"></div>
+  <div class="seg" id="mode" role="group" aria-label="Machine look">
+    <button type="button" data-v="texture">GT textures</button>
+    <button type="button" data-v="tier">Tier colors</button>
+  </div>
+  <div class="legend" id="legend"></div>
+  <details class="limits">
+    <summary>Limitations</summary>
+    <ul>
+      <li>Rollback replacements are excluded.</li>
+      <li>In <span class="auditVersion"></span>, machine/block breaks were not tracked.</li>
+      <li>In <span class="auditVersion"></span>, pipe connections were not recorded - visuals are an estimate.</li>
+      <li>In <span class="auditVersion"></span>, machine facing angle was not recorded.</li>
+    </ul>
+  </details>
+  <div class="credit">Block textures are from <a href="https://github.com/GTNewHorizons/GT5-Unofficial">GT5-Unofficial</a> (LGPL-3.0).</div>
+</div>
+<div class="panel compass">
+  <svg id="compass" width="76" height="76" viewBox="-38 -38 76 76" role="img" aria-label="Compass">
+    <circle class="ring" r="34"></circle>
+    <g id="rose">
+      <path class="needle-n" d="M0,-24 L6,0 L-6,0 Z"></path>
+      <path class="needle-s" d="M0,24 L6,0 L-6,0 Z"></path>
+      <text class="n" x="0" y="-31">N</text>
+      <text x="31" y="0">E</text>
+      <text x="0" y="31">S</text>
+      <text x="-31" y="0">W</text>
+    </g>
+  </svg>
+  <button class="plain" id="northUp" type="button">North up</button>
+</div>
+<div class="panel timeline">
+  <div class="time">
+    <button class="plain" id="play" type="button" aria-label="Play"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.5 L13.5 8 L5 13.5 Z" fill="currentColor"/></svg></button>
+    <button class="plain" id="back" type="button" aria-label="Back one IGT hour">−1 h</button>
+    <input id="slider" type="range" min="0" max="1000" step="1" aria-label="IGT (in-game time)">
+    <button class="plain" id="fwd" type="button" aria-label="Forward one IGT hour">+1 h</button>
+    <output id="when"></output>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>window.BASE_3D = {"dim":0,"endIgtDays":0.8152,"auditVersions":["0.7.1"],"runners":["NekoNou"],"milestone":"Moon","blocks":{"count":497,"types":[{"kind":"machine","tier":"Stone","name":"Coke Oven","toolBuild":false,"tex":0},{"kind":"machine","tier":"Steam","name":"Small Coal Boiler","toolBuild":false,"tex":1},{"kind":"machine","tier":"Steam","name":"Steam Compressor","toolBuild":false,"tex":2},{"kind":"fluid pipe","tier":"No tier","name":"Bronze Fluid Pipe (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"Steam","name":"Steam Alloy Smelter","toolBuild":false,"tex":3},{"kind":"machine","tier":"Steam","name":"Steam Macerator","toolBuild":false,"tex":4},{"kind":"machine","tier":"Stone","name":"Vending Machine","toolBuild":false,"tex":null},{"kind":"fluid pipe","tier":"No tier","name":"Wooden Fluid Pipe (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"Steam","name":"Steam Forge Hammer","toolBuild":false,"tex":5},{"kind":"machine","tier":"Steam","name":"Coke Oven Hatch","toolBuild":false,"tex":6},{"kind":"machine","tier":"Steam","name":"Bricked Blast Furnace","toolBuild":false,"tex":7},{"kind":"machine","tier":"Steam","name":"Steam Extractor","toolBuild":false,"tex":8},{"kind":"item pipe","tier":"No tier","name":"Small Tin Item Pipe (est.)","toolBuild":false,"tex":null},{"kind":"item pipe","tier":"No tier","name":"Large Tin Item Pipe (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"Steam","name":"Steam Grinder","toolBuild":false,"tex":4},{"kind":"machine","tier":"Steam","name":"Steam Hatch","toolBuild":false,"tex":9},{"kind":"machine","tier":"Steam","name":"Output Bus (Steam)","toolBuild":false,"tex":10},{"kind":"machine","tier":"Steam","name":"Input Bus (Steam)","toolBuild":false,"tex":11},{"kind":"fluid pipe","tier":"No tier","name":"Small Wooden Fluid Pipe (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"Steam","name":"Ultra Low Voltage Fluid Tank","toolBuild":false,"tex":12},{"kind":"machine","tier":"Steam","name":"High Pressure Steam Forge Hammer","toolBuild":false,"tex":13},{"kind":"machine","tier":"LV","name":"Basic Steam Turbine","toolBuild":false,"tex":14},{"kind":"cable","tier":"No tier","name":"1x Tin Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Basic Wiremill","toolBuild":false,"tex":15},{"kind":"machine","tier":"LV","name":"Basic Bending Machine","toolBuild":false,"tex":16},{"kind":"machine","tier":"LV","name":"Basic Centrifuge","toolBuild":false,"tex":17},{"kind":"machine","tier":"LV","name":"Basic Canning Machine","toolBuild":false,"tex":18},{"kind":"machine","tier":"LV","name":"Basic Arc Furnace","toolBuild":false,"tex":19},{"kind":"machine","tier":"LV","name":"Basic Assembling Machine","toolBuild":false,"tex":20},{"kind":"machine","tier":"LV","name":"Basic Fluid Extractor","toolBuild":false,"tex":21},{"kind":"machine","tier":"LV","name":"Basic Cutting Machine","toolBuild":false,"tex":22},{"kind":"machine","tier":"LV","name":"Basic Lathe","toolBuild":false,"tex":23},{"kind":"machine","tier":"Steam","name":"High Pressure Steam Alloy Smelter","toolBuild":false,"tex":24},{"kind":"machine","tier":"LV","name":"Basic Pump","toolBuild":false,"tex":25},{"kind":"fluid pipe","tier":"No tier","name":"Small Potin Fluid Pipe (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Basic Chemical Reactor","toolBuild":false,"tex":26},{"kind":"machine","tier":"LV","name":"Basic Distillery","toolBuild":false,"tex":27},{"kind":"machine","tier":"LV","name":"Basic Gas Turbine","toolBuild":false,"tex":28},{"kind":"cable","tier":"No tier","name":"8x Tin Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Basic Electrolyzer","toolBuild":false,"tex":29},{"kind":"cable","tier":"No tier","name":"2x Tin Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Input Hatch (LV)","toolBuild":false,"tex":30},{"kind":"machine","tier":"LV","name":"Input Bus (LV)","toolBuild":false,"tex":31},{"kind":"machine","tier":"No tier","name":"Maintenance Hatch","toolBuild":false,"tex":32},{"kind":"machine","tier":"LV","name":"Output Bus (LV)","toolBuild":false,"tex":33},{"kind":"machine","tier":"No tier","name":"Electric Blast Furnace","toolBuild":false,"tex":34},{"kind":"machine","tier":"LV","name":"LV Energy Hatch","toolBuild":false,"tex":35},{"kind":"machine","tier":"LV","name":"Muffler Hatch (LV)","toolBuild":false,"tex":36},{"kind":"machine","tier":"LV","name":"Low Voltage Battery Buffer","toolBuild":false,"tex":37},{"kind":"machine","tier":"LV","name":"Basic Polarizer","toolBuild":false,"tex":38},{"kind":"machine","tier":"LV","name":"Basic Circuit Assembler","toolBuild":false,"tex":39},{"kind":"machine","tier":"MV","name":"Advanced Gas Turbine","toolBuild":false,"tex":40},{"kind":"cable","tier":"No tier","name":"8x Silver Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"MV","name":"Advanced Electrolyzer","toolBuild":false,"tex":41},{"kind":"machine","tier":"MV","name":"Advanced Extruder","toolBuild":false,"tex":42},{"kind":"machine","tier":"MV","name":"Advanced Fluid Extractor","toolBuild":false,"tex":43},{"kind":"machine","tier":"MV","name":"Advanced Mixer","toolBuild":false,"tex":44},{"kind":"cable","tier":"No tier","name":"1x Copper Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Low Voltage Transformer","toolBuild":false,"tex":37},{"kind":"cable","tier":"No tier","name":"4x Tin Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Basic Forming Press","toolBuild":false,"tex":45},{"kind":"machine","tier":"MV","name":"Advanced Cutting Machine","toolBuild":false,"tex":46},{"kind":"machine","tier":"MV","name":"Advanced Precision Laser Engraver","toolBuild":false,"tex":47},{"kind":"machine","tier":"MV","name":"Advanced Assembling Machine","toolBuild":false,"tex":48},{"kind":"machine","tier":"MV","name":"MV Energy Hatch","toolBuild":false,"tex":49},{"kind":"cable","tier":"No tier","name":"2x Copper Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"MV","name":"Advanced Chemical Bath","toolBuild":false,"tex":50},{"kind":"machine","tier":"MV","name":"Advanced Fluid Solidifier","toolBuild":false,"tex":51},{"kind":"machine","tier":"LV","name":"Basic Crop Manager","toolBuild":false,"tex":52},{"kind":"machine","tier":"LV","name":"Low Voltage Fluid Tank","toolBuild":false,"tex":53},{"kind":"cable","tier":"No tier","name":"2x Silver Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"LV","name":"Basic Mixer","toolBuild":false,"tex":54},{"kind":"machine","tier":"LV","name":"Basic Alloy Smelter","toolBuild":false,"tex":55},{"kind":"machine","tier":"MV","name":"Super Tank I","toolBuild":false,"tex":56},{"kind":"machine","tier":"MV","name":"Medium Voltage Battery Buffer","toolBuild":false,"tex":57},{"kind":"machine","tier":"MV","name":"Advanced Lathe","toolBuild":false,"tex":58},{"kind":"machine","tier":"MV","name":"Fluid Drilling Rig","toolBuild":false,"tex":59},{"kind":"machine","tier":"LV","name":"Output Hatch (LV)","toolBuild":false,"tex":60},{"kind":"machine","tier":"HV","name":"Turbo Gas Turbine","toolBuild":false,"tex":61},{"kind":"cable","tier":"No tier","name":"8x Electrum Cable (est.)","toolBuild":false,"tex":null},{"kind":"cable","tier":"No tier","name":"4x Electrum Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"HV","name":"Advanced Assembling Machine II","toolBuild":false,"tex":62},{"kind":"machine","tier":"HV","name":"Advanced Autoclave II","toolBuild":false,"tex":63},{"kind":"machine","tier":"HV","name":"Advanced Chemical Reactor II","toolBuild":false,"tex":64},{"kind":"machine","tier":"HV","name":"Advanced Electrolyzer II","toolBuild":false,"tex":65},{"kind":"machine","tier":"MV","name":"Medium Voltage Transformer","toolBuild":false,"tex":57},{"kind":"machine","tier":"HV","name":"High Voltage Battery Buffer","toolBuild":false,"tex":66},{"kind":"machine","tier":"MV","name":"Advanced Fluid Heater","toolBuild":false,"tex":67},{"kind":"machine","tier":"HV","name":"Advanced Cutting Machine II","toolBuild":false,"tex":68},{"kind":"machine","tier":"HV","name":"Advanced Mixer II","toolBuild":false,"tex":69},{"kind":"machine","tier":"HV","name":"Advanced Bending Machine II","toolBuild":false,"tex":70},{"kind":"cable","tier":"No tier","name":"1x Gold Cable (est.)","toolBuild":false,"tex":null},{"kind":"machine","tier":"HV","name":"HV Energy Hatch","toolBuild":false,"tex":71},{"kind":"machine","tier":"HV","name":"Turbo Centrifuge","toolBuild":false,"tex":72},{"kind":"machine","tier":"HV","name":"Advanced Compressor II","toolBuild":false,"tex":73},{"kind":"machine","tier":"HV","name":"Cleanroom Controller","toolBuild":false,"tex":74},{"kind":"machine","tier":"MV","name":"MV Machine Hull","toolBuild":false,"tex":57},{"kind":"machine","tier":"HV","name":"HV Machine Hull","toolBuild":false,"tex":66},{"kind":"machine","tier":"MV","name":"Advanced Circuit Assembler","toolBuild":false,"tex":75},{"kind":"machine","tier":"HV","name":"Advanced Precision Laser Engraver II","toolBuild":false,"tex":76},{"kind":"machine","tier":"HV","name":"Advanced Wiremill II","toolBuild":false,"tex":77},{"kind":"machine","tier":"HV","name":"Implosion Compressor","toolBuild":false,"tex":78},{"kind":"machine","tier":"HV","name":"Advanced Circuit Assembler II","toolBuild":false,"tex":79},{"kind":"machine","tier":"HV","name":"Advanced Sifting Machine II","toolBuild":false,"tex":80},{"kind":"machine","tier":"HV","name":"Vacuum Freezer","toolBuild":false,"tex":81}],"x":[355,-1,-4,-1,-16,0,-1,0,1,-11,11,0,0,-1,0,2,-1,0,0,-1,2,-1,1,-2,-5,0,-4,0,11,0,-8,1,-1,1,-1,1,5,0,0,2,-2,0,0,3,0,0,0,0,0,0,-2,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,-3,0,0,-1,-1,-1,0,1,1,-2,-1,3,-1,0,0,0,-1,2,0,1,0,-33,-1,0,1,1,6,0,0,1,-1,0,0,0,0,0,-5,1,3,0,-2,1,1,0,1,-1,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,-1,4,1,-1,1,-6,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,-3,0,0,-1,-1,5,0,1,0,0,-6,2,0,-2,6,0,0,0,0,0,0,-3,-2,-1,2,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-1,2,-5,-2,7,-5,5,-8,1,0,0,0,0,0,0,0,0,1,-1,0,5,0,0,2,-1,-3,3,1,-1,-6,6,0,-1,1,-6,6,0,-1,1,-1,1,-1,0,0,1,0,-6,0,0,0,0,0,0,0,-1,0,1,0,0,0,0,0,6,0,-1,-1,-1,-1,-2,0,1,5,-5,5,0,0,0,0,0,-1,1,0,1,-7,0,0,3,-2,0,0,0,0,1,-1,25,-24,0,1,1,1,0,0,-5,0,2,-1,0,-1,0,1,5,-1,0,1,-4,0,0,5,0,-5,0,-4,1,-1,0,-1,-1,0,2,0,7,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-5,-1,1,-8,0,14,-2,2,-12,0,0,-1,0,0,0,0,11,-5,-6,13,0,0,-5,0,1,1,2,-1,1,-7,0,2,6,-6,-6,10,-4,0,6,0,-6,0,0,-3,3,0,-1,1,0,-1,1,11,-11,0,1,-2,1,1,3,0,0,-4,0,-2,-1,0,2,-2,2,1,0,0,0,0,6,-2,-1,1,0,2,2,1,-3,0,0,0,-1,0,0,0,0,0,2,0,0,-8,-9,0,16,-8,0,0,23,0,-1,0,0,0,1,-15,1,-7,0,0,-2,2,0,0,0,0,0,6,-2,-5,1,9,-8,3,2],"y":[63,1,0,0,37,0,0,0,0,0,0,1,-2,1,0,0,0,1,0,0,0,1,0,0,-2,0,0,0,0,0,1,0,0,0,0,0,-1,-1,1,1,-2,1,0,1,0,0,0,0,0,0,-1,2,0,-2,1,0,0,0,0,0,0,0,-1,0,0,-2,1,1,0,0,0,0,0,0,0,0,1,0,-2,1,0,1,0,-1,0,-1,0,1,0,-1,0,1,0,0,0,-2,1,-1,0,2,0,2,0,-1,-1,0,0,0,0,0,0,0,-2,0,1,0,0,0,3,-1,0,-1,0,0,0,-2,0,0,0,0,0,0,0,0,1,1,0,0,0,0,1,-1,-1,0,0,2,0,-3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1,-1,0,1,-2,2,-1,0,0,0,0,1,0,-2,1,0,1,-2,1,-1,1,0,0,0,-2,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,-1,1,0,0,-1,0,0,1,-1,0,0,1,1,-2,2,-1,1,-1,0,0,0,0,0,0,0,0,0,1,-2,0,0,1,-1,1,-1,0,1,0,-2,1,1,0,-1,2,1,0,0,0,0,0,0,-1,0,0,1,0,0,0,0,-1,1,0,0,0,0,0,0,0,-1,0,1,0,0,0,0,-1,0,0,-2,1,0,0,1,-2,2,0,0,-2,1,0,1,-1,-1,-1,0,0,0,1,1,0,0,0,1,0,0,-1,2,-3,1,0,-1,1,0,0,-2,1,1,0,-1,-1,0,0,0,0,1,0,0,-1,1,-1,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,-1,0,0,1,1,-1,0,0,0,0,0,-2,0,1,1,0,0,0,0,0,-1,0,0,-1,0,0,0,0,1,-1,1,0,1,1,-1,0,2,-1,-1,0,1,0,0,1,0,1,-5,0,1,0,3,-3,2,0,0,-1,0,0,0,0,0,-1,1,-1,0,-1,0,1,0,0,-1,0,1,1,-1,0,1,1,0,-2,-2,-4,2,0,0,1,0,-1,0,0,1,1,-2,0,0,5,-2,1,1,-2,0,1,-1,1,1,1,-2,1,1,-6,0,7,1,1,0,-2,0,1,-2,2,-1,-2,0,3,0,-9,5,0,1],"z":[-15,2,1,0,-17,1,-1,-2,-1,0,5,-5,0,2,-8,0,0,0,-2,2,0,0,0,0,-9,2,0,-2,18,1,4,0,2,0,-1,0,-5,3,0,1,0,0,1,-1,-1,-1,-1,-3,1,1,-9,0,0,0,0,0,1,1,1,1,1,1,0,-1,1,1,0,0,0,7,-8,0,0,0,1,0,-1,0,4,-5,0,1,0,-1,0,-3,2,4,1,-11,0,0,0,0,6,0,0,0,-1,0,-2,2,1,0,-6,0,3,-1,-2,0,0,1,3,0,0,0,1,-2,1,0,-1,7,1,1,1,-6,1,1,1,1,1,1,1,1,-2,1,1,1,1,1,-7,-1,5,-22,-1,1,-1,11,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0,0,0,0,0,-1,0,19,1,5,-6,2,-21,0,1,0,0,23,-4,2,1,-20,1,0,0,-2,0,0,1,19,-4,8,-2,1,-11,0,0,0,0,1,1,1,1,1,1,1,1,1,0,0,1,1,1,-4,-1,-1,-1,-1,0,0,3,-3,7,-4,2,-11,0,-1,1,-2,-1,-1,2,0,3,11,-15,0,17,0,-1,-6,-18,9,-1,10,-9,15,-16,1,-2,1,11,-9,0,1,1,-1,1,0,0,0,-1,0,9,0,-1,-1,-1,-1,-1,-1,-2,-1,1,1,-1,-1,-1,-1,-2,0,0,0,0,0,1,-1,0,3,8,-16,1,3,-1,-1,8,0,-1,9,5,-3,-15,0,28,-17,-1,2,-3,0,0,0,-1,6,0,0,0,0,0,0,3,1,-3,0,2,-4,-7,6,2,-1,3,-15,13,4,-5,1,0,-1,5,-12,0,0,1,0,0,0,0,-2,2,-1,0,0,0,0,0,0,1,1,1,1,0,0,1,1,1,1,1,1,1,1,-12,1,0,-2,0,7,1,2,-12,-1,-1,2,0,0,0,-1,8,1,-10,14,-10,1,8,0,0,0,0,0,0,-7,0,-1,9,1,-16,18,-1,1,-1,-7,-14,-1,2,-2,-1,2,-3,0,0,0,3,14,-16,-1,0,0,0,0,25,-2,-2,-11,0,3,0,1,-2,2,-2,0,0,-1,0,0,0,13,0,0,1,-11,7,0,-1,1,1,-2,0,0,1,1,-1,0,-1,2,-1,4,-11,0,4,-6,0,0,15,0,0,0,1,0,-1,-7,0,-12,0,1,0,0,1,0,1,0,0,11,-1,-12,0,13,-9,0,6],"placed":[23552,149,23401,1337,9094,6,11,2391,6796,1391,6248,11009,2137,683,14937,9,12,26,122,188,16,49,346,15,12014,8,29,10,6147,121,19487,8,8,7,85,29,1636,23216,6,206,63,12,403,633,5,5,6,25,214,6,998,13,7,21,13,52,9,6,7,9,28,28,25,131,123,826,8,12,4205,5343,11802,47,8,85,15,10614,8949,22377,2750,4703,12293,2610,15405,20,10744,5866,11,15125,11,20043,597,124,860,3,2133,98,5,91,48,65,66,94,53,5,106,40,20,5,15,2,10,8,327,42,1179,119,7,18,171,5,10,832,95,7,6,124,52,7,7,6,6,9,61,7,84,92,8,7,6,8,58,2929,815,6638,8,62,34,507,41,6,6,7,6,6,6,6,6,17,9,24,7,24,44,6,6,807,8,653,860,161,723,18,1117,10,46,653,161,4939,3824,6017,23,55,121,28,56,6,96,1052,4795,5427,26,967,8985,62,6,6,6,19,5,7,6,6,6,6,7,6,235,899,11,6,7,29,6,5,6,43,47,5359,432,11892,969,6126,5228,427,125,55,53,98,6,6,46,160,396,4372,773,65,6256,1075,2528,553,7027,124,67,728,492,401,766,95,10,35,4352,767,4,29,11,5,5,74,9,8,314,3,1403,5,6,16,5,19,41,8,228,51,64,231,8,8,43,3,21,21,14,23,5,12,17,6,6,439,1606,2316,9,21,8,18,1236,18,43,1713,6509,5795,15701,88,864,8649,359,16,118,5,6,33,2246,3662,475,29,9,13,8,42,4407,10,7965,6002,34,1981,199,356,7554,5212,17135,104,4337,54,25,2128,14,9915,21,17944,658,21,6,11,40,57,44,34,4538,749,199,7,6,6,6,11,30,5,5,6,5,8,10,5,5,5,6,7,6,6,53,7,4,157,3,2585,6880,1566,315,7,7,126,85,4,10,12,934,167,310,587,4150,1109,4721,42,26,8,11,5,11,1582,50,125,1640,4917,2273,2094,6017,50,2379,1742,5594,30,34,119,109,133,501,7,29,16,150,590,1639,53,8,12,6,7,4644,18,31,4513,2,316,18,43,35,102,19,38,211,34,10,5,2188,139,54,90,388,4064,9506,811,123,12,5,120,97,341,50,6,54,192,8156,433,1042,2063,830,31,996,17109,44,34,31796,203,52,40,34,15,354,1230,1161,3100,15,209,68,197,524,7,41,114,9,2683,1425,2664,120,53537,382,16,612],"type":[0,0,1,2,3,3,4,2,5,6,2,5,7,8,0,0,9,9,9,0,0,9,0,0,10,10,10,10,11,2,12,12,12,12,13,13,4,14,14,15,16,17,14,3,3,3,3,3,3,3,18,18,18,18,18,18,18,18,18,18,18,18,19,19,19,12,12,12,20,14,21,22,22,22,23,24,25,26,27,28,29,27,29,30,31,3,3,32,32,33,33,7,7,7,19,34,34,34,34,35,36,19,12,12,7,7,7,7,7,7,7,7,34,34,37,22,22,22,34,34,34,38,38,38,38,34,34,34,34,34,34,34,34,34,37,38,38,38,38,38,36,24,37,37,37,37,37,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,23,28,29,36,39,34,34,40,40,27,26,28,25,27,41,42,43,44,45,46,46,47,48,35,49,29,50,34,34,34,34,34,34,34,34,34,34,34,34,34,34,51,52,52,52,52,52,52,52,52,52,53,54,35,34,55,35,56,51,57,58,53,59,59,59,36,34,37,60,36,34,61,61,62,63,27,47,45,63,43,27,41,42,44,44,35,64,64,51,51,51,51,34,34,34,65,65,34,34,34,34,34,34,34,34,19,34,12,34,34,34,34,34,34,34,34,34,34,34,34,34,34,44,36,34,34,34,34,34,51,34,66,51,67,27,36,34,68,36,35,35,34,34,34,34,69,58,70,70,70,70,70,70,30,31,28,71,72,73,73,19,74,75,66,44,25,35,49,34,51,35,49,76,34,34,34,34,51,64,43,77,34,78,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,79,80,80,80,34,34,81,82,83,36,36,36,34,34,34,34,34,84,73,34,83,73,73,85,80,80,80,80,80,80,78,80,86,83,87,36,88,26,26,89,90,41,42,34,47,45,43,34,34,78,78,44,91,92,80,80,80,80,80,93,94,88,92,92,78,78,78,78,80,80,80,80,80,80,80,73,73,73,73,73,73,95,43,96,97,97,64,85,80,80,80,80,80,98,88,99,66,78,92,100,78,78,80,37,46,101,43,44,42,47,97,102,42,44,42,44,43,64,64,85,80,80,83,103,104,104,81,80,80,81],"breaks":[]},"textureSets":[{"side":"iconsets/COKE_OVEN_CASING.png","top":"iconsets/COKE_OVEN_CASING.png","bottom":"iconsets/COKE_OVEN_CASING.png","front":["iconsets/COKE_OVEN_OVERLAY_INACTIVE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZEBRICKS_SIDE.png","top":"iconsets/MACHINE_BRONZEBRICKS_TOP.png","bottom":"iconsets/MACHINE_BRONZEBRICKS_BOTTOM.png","front":["iconsets/BOILER_FRONT.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_COMPRESSOR.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_ALLOY_SMELTER.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_MACERATOR.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_HAMMER.png"],"topOverlays":[]},{"side":"iconsets/COKE_OVEN_CASING.png","top":"iconsets/COKE_OVEN_CASING.png","bottom":"iconsets/COKE_OVEN_CASING.png","front":[],"topOverlays":[]},{"side":"iconsets/MACHINE_CASING_DENSEBRICKS.png","top":"iconsets/MACHINE_CASING_DENSEBRICKS.png","bottom":"iconsets/MACHINE_CASING_DENSEBRICKS.png","front":["iconsets/MACHINE_CASING_BRICKEDBLASTFURNACE_INACTIVE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_EXTRACTOR.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":[],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_OUT.png","iconsets/ITEM_OUT_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_IN.png","iconsets/ITEM_IN_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_BRONZE_SIDE.png","top":"iconsets/MACHINE_BRONZE_TOP.png","bottom":"iconsets/MACHINE_BRONZE_BOTTOM.png","front":["iconsets/OVERLAY_SIDE_FLUIDTANK.png"],"topOverlays":["iconsets/OVERLAY_TOP_FLUIDTANK.png"]},{"side":"iconsets/MACHINE_STEEL_SIDE.png","top":"iconsets/MACHINE_STEEL_TOP.png","bottom":"iconsets/MACHINE_STEEL_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_HAMMER.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/STEAM_TURBINE_SIDE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/wiremill/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/wiremill/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/bender/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/bender/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/centrifuge/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/centrifuge/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/canner/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/canner/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/arc_furnace/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/arc_furnace/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/assembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/assembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/fluid_extractor/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/fluid_extractor/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/cutter/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/cutter/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/lathe/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/lathe/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_STEEL_SIDE.png","top":"iconsets/MACHINE_STEEL_TOP.png","bottom":"iconsets/MACHINE_STEEL_BOTTOM.png","front":["iconsets/OVERLAY_FRONT_STEAM_ALLOY_SMELTER.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/pump/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/pump/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/chemical_reactor/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/chemical_reactor/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/distillery/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/distillery/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/GAS_TURBINE_SIDE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/electrolyzer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/electrolyzer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_IN.png","iconsets/FLUID_IN_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_IN.png","iconsets/ITEM_IN_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_MAINTENANCE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_OUT.png","iconsets/ITEM_OUT_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_HEATPROOFCASING.png","top":"iconsets/MACHINE_HEATPROOFCASING.png","bottom":"iconsets/MACHINE_HEATPROOFCASING.png","front":["iconsets/OVERLAY_FRONT_ELECTRIC_BLAST_FURNACE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_ENERGY_IN_MULTI.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":[],"topOverlays":["iconsets/OVERLAY_MUFFLER.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":[],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/polarizer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/polarizer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/circuitassembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/circuitassembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["iconsets/GAS_TURBINE_SIDE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/electrolyzer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/electrolyzer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/extruder/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/extruder/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/fluid_extractor/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/fluid_extractor/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/mixer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/mixer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/press/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/press/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/cutter/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/cutter/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/laser_engraver/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/laser_engraver/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/assembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/assembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["iconsets/OVERLAY_ENERGY_IN_MULTI.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/chemical_bath/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/chemical_bath/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/fluid_solidifier/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/fluid_solidifier/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/cropmanager/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/cropmanager/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_SIDE_FLUIDTANK.png"],"topOverlays":["iconsets/OVERLAY_TOP_FLUIDTANK.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/mixer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/mixer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["basicmachines/alloy_smelter/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/alloy_smelter/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["iconsets/OVERLAY_QTANK.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":[],"topOverlays":[]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/lathe/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/lathe/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_CASING_SOLID_STEEL.png","top":"iconsets/MACHINE_CASING_SOLID_STEEL.png","bottom":"iconsets/MACHINE_CASING_SOLID_STEEL.png","front":["iconsets/OVERLAY_FRONT_OIL_DRILL.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_LV_SIDE.png","top":"iconsets/MACHINE_LV_TOP.png","bottom":"iconsets/MACHINE_LV_BOTTOM.png","front":["iconsets/OVERLAY_PIPE_OUT.png","iconsets/FLUID_OUT_SIGN.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["iconsets/GAS_TURBINE_SIDE.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/assembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/assembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/autoclave/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/autoclave/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/chemical_reactor/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/chemical_reactor/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/electrolyzer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/electrolyzer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":[],"topOverlays":[]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/fluid_heater/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/fluid_heater/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/cutter/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/cutter/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/mixer/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/mixer/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/bender/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/bender/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["iconsets/OVERLAY_ENERGY_IN_MULTI.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/centrifuge/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/centrifuge/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/compressor/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/compressor/OVERLAY_TOP.png"]},{"side":"iconsets/BLOCK_PLASCRETE.png","top":"iconsets/BLOCK_PLASCRETE.png","bottom":"iconsets/BLOCK_PLASCRETE.png","front":[],"topOverlays":["iconsets/OVERLAY_TOP_CLEANROOM.png"]},{"side":"iconsets/MACHINE_MV_SIDE.png","top":"iconsets/MACHINE_MV_TOP.png","bottom":"iconsets/MACHINE_MV_BOTTOM.png","front":["basicmachines/circuitassembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/circuitassembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/laser_engraver/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/laser_engraver/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/wiremill/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/wiremill/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_CASING_SOLID_STEEL.png","top":"iconsets/MACHINE_CASING_SOLID_STEEL.png","bottom":"iconsets/MACHINE_CASING_SOLID_STEEL.png","front":["iconsets/OVERLAY_FRONT_IMPLOSION_COMPRESSOR.png"],"topOverlays":[]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/circuitassembler/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/circuitassembler/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_HV_SIDE.png","top":"iconsets/MACHINE_HV_TOP.png","bottom":"iconsets/MACHINE_HV_BOTTOM.png","front":["basicmachines/sifter/OVERLAY_FRONT.png"],"topOverlays":["basicmachines/sifter/OVERLAY_TOP.png"]},{"side":"iconsets/MACHINE_CASING_FROST_PROOF.png","top":"iconsets/MACHINE_CASING_FROST_PROOF.png","bottom":"iconsets/MACHINE_CASING_FROST_PROOF.png","front":["iconsets/OVERLAY_FRONT_VACUUM_FREEZER.png"],"topOverlays":[]}],"textures":{"basicmachines/alloy_smelter/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABdUExURQAAACYmJywsLCQkJCMjJCIhIR4fHzAwMAAAABsbGyorKjIyMjY2NTMzMzg4OD0+PkRDQ1hZWUpJSlVVVVtbW0dGRzY2NlBPT1ZVVkVERFNTUzs8PEhISEJCQU1NTWWoJvwAAAABdFJOUwBA5thmAAAAWElEQVQY042NRw6AMAwE6RnTe4f/PxMl8iFcEHNaz1raIPiNsbxuEVHjOiOAqBBbYlHhoi88Pgb9DzMOS982dRGFKjqYoIRExQobVJCq2O/zOmaTx9mv2QcJowTIsMJaUgAAAABJRU5ErkJggg==","basicmachines/arc_furnace/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3goYCg4yYD5J9gAAATZJREFUOMulUzFuwzAQo4v8xhnqNtmaZnVemNdkbJYGzWvkjWQH6WQpLbrUwEE4Wcc7UtRgG//5Nm0yz7MlQRJEghbEkkuQCNK43T6HqHn6tbiGC9gaFjFNz+4ATvOpKyYJyTCZ95yDERS249aVAp0PXi4XAMDh8AZJ+LheAQCvux0k4f51BwCM4whZqwbBMz7S9QAAmJl//S/BbAEksAGQ2AHKfe4i6Pl8LhTUTxDC1fxxQgmWsCxLBgixugkaf/ARsDRMKeVboHrOkkGyK6CbvDRcUgoNHiagYPcdTfeAElJQkH5y/CsPp6aUMNjGfrd3ta252resWTRmqmIOCu/H45An8GrT1veywbJntWAuGiwYpunFdrGvXQUiA6R9UKwCR6NNbDo8z7zagu2uOF+nyyPLU3wDjnjvTJ1buCwAAAAASUVORK5CYII=","basicmachines/assembler/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","basicmachines/assembler/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAYUExURQAAADMzM3yAhBkdHUdHR/+QAP8AAP//AK39xecAAAABdFJOUwBA5thmAAAAQUlEQVQI12NgwAQsLo4MQMTA4BIeKOCkCBJJTWQAMwTDgw3ADMbUZAYhmAiYwWxsDBEBASFlCC0IZTBiEQGqxwQAFQoI/TfAvf0AAAAASUVORK5CYII=","basicmachines/autoclave/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAEdHRxkdHTMzM4CAgNjLZGgAAAABdFJOUwBA5thmAAAAMklEQVQI12NgwARKYMDAwKTiAgROCgxMLoJA4AJkCIIBqQxjEG0MZCgbA4GRAsIKDAAAr+0JXiExpqcAAAAASUVORK5CYII=","basicmachines/autoclave/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAiElEQVQ4y62TMRKAIAwE8w0LZuwteYB2fMqCwn9HQeKcGgWRYpuELAcMxMz0B2omcM6xYK0VHvuqYBj7CE3EnTFRIJLQn/0SUQWhKMMowA2yAhkWwQYFigWICLCfFbD3O3RPUC4IJRB8S5CGRYDvjQLsHQvSjieud/Mq0MCoVYKmCbTjtf1MtawfQWzDKq7EhQAAAABJRU5ErkJggg==","basicmachines/bender/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAJUExURQAAADAwMAAAANYTrkoAAAABdFJOUwBA5thmAAAAMklEQVQI12NgQIAAVgYGxiVSDgxsmWkTGNhWZk2AcBESjEuAEgwBQAkGBpAEAysDGgAAu4AJ+gOEx14AAAAASUVORK5CYII=","basicmachines/canner/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAAExRU7OtrUxQUmcREXt7e5CQkEtPUU5SVEtQUk9UVU1SVGfOawYAAAABdFJOUwBA5thmAAAAIklEQVQI12NgwAdY4Iw0BSiLKQCdQQTgWC1oAGFVGuJXCQCvYALRzc2ssQAAAABJRU5ErkJggg==","basicmachines/centrifuge/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAB7UExURQAAAEBAQBoaGhkZGS8vLwMDAzY2NiIlJT9CQh4eHjExMUJCQggICAkJCQwMDDg4OERERHyTlwEBAW+GihcXF0FBQgQEBFlwdAoKCoGBgXR0dHx8fC0tLT49PQ4ODpiYmEFBQYqKijAwMBsbG2V8gBUVFTk4OGF5fBYWFsoRtEIAAAABdFJOUwBA5thmAAAAYElEQVQYV62NRw6AMBDE0jYhoffe6/9fyIElD0D4ZkujIeQbDmJ9MTsrQQqFPswH33ygQj/FGSdzrh5IN8YQiJBrH2iqbTAXa0DaSdaHrK4K6mIgKu9a7iUyUu+vQshP3LqwBME5FaGfAAAAAElFTkSuQmCC","basicmachines/centrifuge/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAJUExURQAAAIaKjomdqqFS6ZAAAAABdFJOUwBA5thmAAAALElEQVQI12NgQADREAYGxtBQBwbGzEwHBtaVWQFQIjQURsDFwErAisHa4AAA7WEMbd5mg9wAAAAASUVORK5CYII=","basicmachines/chemical_bath/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAAAMDAyIlJT9CQnx8fHyTl2+GioGBgWF5fGV8gHR0dFlwdGXPaFAAAAABdFJOUwBA5thmAAAANUlEQVQI12NgIAYYg4ARkGEoKLhRUAjMkBSEMhoFBYMgUoJiEBHBhVApcZgaRwhDCQzw2QQALMoH0n2i7fYAAAAASUVORK5CYII=","basicmachines/chemical_reactor/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAICAgMDAwJafo////3dYumEAAAABdFJOUwBA5thmAAAAL0lEQVQI12NgwASCghDM4KQMwfgYcMUMAgwMjFD9EAEgX4ABVcRJSUkZlYFQDAYAt+QF8ZfiUtcAAAAASUVORK5CYII=","basicmachines/circuitassembler/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","basicmachines/circuitassembler/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAYUExURQAAADMzM3yAhBkdHUdHR/+QAP8AAP//AK39xecAAAABdFJOUwBA5thmAAAAQUlEQVQI12NgwAQsLo4MQMTA4BIeKOCkCBJJTWQAMwTDgw3ADMbUZAYhmAiYwWxsDBEBASFlCC0IZTBiEQGqxwQAFQoI/TfAvf0AAAAASUVORK5CYII=","basicmachines/compressor/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAACHUExURQAAAAgICBoaGhkZGS8vLwMDAzY2NiIlJT9CQgcHBzExMUBAQEJCQjg4OAkJCURERBEQERcXF0FBQnx8fIGBgVlwdHyTlz49PQwMDC0tLTAwMEFBQZiYmA4ODmF5fDk4OGV8gIqKijc3NxYWFhUVFQEBATMzMxsbGwQEBAoKCm+Gih4eHnR0dFgHlKgAAAABdFJOUwBA5thmAAAAY0lEQVQY02NgoArgQAB2iACnFJcKkygrGwsnVEBWUZ5ZgY+Vm4URKiAjzSWnzsjKxiMGFVBi4WXWBqrQUoMKSLBwKTPpIJkhKM7LJKKpwc0jALNFSFKYmVGVjR+qgh0JkOURAM/1BaNLEXVKAAAAAElFTkSuQmCC","basicmachines/compressor/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAAAAAFZdXlFQUCsrKymXHZ8AAAABdFJOUwBA5thmAAAAJ0lEQVQI12NgIA4wKUAZLi4QmkVQ0ADMUBEUNEJlwKUYjI3RtRMCAMyxAs+7QU5ZAAAAAElFTkSuQmCC","basicmachines/cutter/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAA5UExURQAAAHR0dFlwdGF5fD9CQgcHB5iYmA4ODiIlJcDAwDg4OHx8fAEBAS8vLwgICBoaGgMDA3yTl0JCQjo+MIQAAAABdFJOUwBA5thmAAAASklEQVQYV62NSRKAIBDEWITQbqj/f6wHQOdsmWMq1e3cL0wvpYkE1HBA6oIsBUlSFxkiwHWOQo04CgA8bLMpvN1IsLCvz0sxuC/cfd8DGNSPlqgAAAAASUVORK5CYII=","basicmachines/distillery/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAB7UExURQAAAEdHR6i/xanAxYCAgP8AAKzHzBkdHTMzM8DAwP+AgK2/wr7X3L7Z3dHw9MTw98zr78fl6cHd3rfQ1eHs7gAAAKi/xMTk5b7Y3KnAxqvDx73W2qvDyKrDybnS17zV2r3n7rrU2MTi5q/IzLnS1rfLzKvCx7HIzgCAAIgXT4IAAAABdFJOUwBA5thmAAAAdklEQVQY043Pxw6AIBAEUEFAsPfe+/9/oazrhZtz2eRlMsla1o8QQqTU1w+CGqEobkdnCkP/BamYcvSd47hDYIoB7FG0GI0sSUajceRr9gIMAlwi37ChA3AK0SO4LoeSnQ7tB5xDwxZpg8A/8LzKGKWUln9efQAP8AV6W0d2sgAAAABJRU5ErkJggg==","basicmachines/electrolyzer/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAICAgMDAwP///5afowBspXMAAAABdFJOUwBA5thmAAAANUlEQVQIW2NgwASCjAKMAoJAhhGzArOCEVaGCpMDk4MKsmIBRghmEAQDsElGIBXYGVAV6AAAkw8E/xBEqj4AAAAASUVORK5CYII=","basicmachines/extruder/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABIUExURQAAAHyTl2+GigEBATg4OAcHBwMDAw4ODiIlJT9CQgoKCggICHx8fAQEBHR0dIGBgVlwdAkJCWV8gBoaGpiYmIqKimF5fBkZGUUOYd0AAAABdFJOUwBA5thmAAAATUlEQVQYV63NOQ6AMBAEQQOzbnPf8P+fEmCwY0SHpR2tc79Up8INBqyTB4ugXecyeyDCJh0AFM+FBEBJDgNpIomx6RMYdLTV+yVkuS9dxD0DcpDHLqUAAAAASUVORK5CYII=","basicmachines/extruder/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","basicmachines/fluid_extractor/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAC0UExURQAAAL7U19Dv88Lf5NT098nn68rh5DY1NQAAAMfe4bTQ1U9cX8Xc33BwcMri5cLu9cjf4tPy9rvQ1KvFy6nDybLN0q7JzsXb38LY27/o7u36++rz9M7t8cfd4LrQ1LnO0cLZ3Mfl6bHFyb3S1sng46S2u7/V2LLFyqW3vOby88Pr8sHs9K3Bxam9wbzR1bXQ1t7m6Ka5vWp+ga7CxqO1um16fEldYaq9wae6v3OJjWFhYVRscPZ2ii8AAAABdFJOUwBA5thmAAAAi0lEQVQYGW3BRRKDUBBAwQd8mAmEuLu7u9z/XknVZJlu/sl8QTebrWOiloug0AkbmLZzEQzCsInJOTcBL8x7mFyxWIDZMPAwGd9fQSnI9zBjf72D0jLuY+bB/gyHOB5hNtXqHY7l8hSzrdUecKlUFhi5JSJPuZ4EI4nqWzVNBCOaqmqqKhh5yQ9/fABxEQj318RRjAAAAABJRU5ErkJggg==","basicmachines/fluid_extractor/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAAAAAFZdXlFQUCsrKymXHZ8AAAABdFJOUwBA5thmAAAAJ0lEQVQI12NgIA4wKUAZLi4QmkVQ0ADMUBEUNEJlwKUYjI3RtRMCAMyxAs+7QU5ZAAAAAElFTkSuQmCC","basicmachines/fluid_heater/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAC0UExURQAAAL7U19Dv88Lf5NT098nn68rh5DY1NQAAAMfe4bTQ1U9cX8Xc33BwcMri5cLu9cjf4tPy9rvQ1KvFy6nDybLN0q7JzsXb38LY27/o7u36++rz9M7t8cfd4LrQ1LnO0cLZ3Mfl6bHFyb3S1sng46S2u7/V2LLFyqW3vOby88Pr8sHs9K3Bxam9wbzR1bXQ1t7m6Ka5vWp+ga7CxqO1um16fEldYaq9wae6v3OJjWFhYVRscPZ2ii8AAAABdFJOUwBA5thmAAAAi0lEQVQYGW3BRRKDUBBAwQd8mAmEuLu7u9z/XknVZJlu/sl8QTebrWOiloug0AkbmLZzEQzCsInJOTcBL8x7mFyxWIDZMPAwGd9fQSnI9zBjf72D0jLuY+bB/gyHOB5hNtXqHY7l8hSzrdUecKlUFhi5JSJPuZ4EI4nqWzVNBCOaqmqqKhh5yQ9/fABxEQj318RRjAAAAABJRU5ErkJggg==","basicmachines/fluid_heater/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAAAAAFZdXlFQUCsrKymXHZ8AAAABdFJOUwBA5thmAAAAJ0lEQVQI12NgIA4wKUAZLi4QmkVQ0ADMUBEUNEJlwKUYjI3RtRMCAMyxAs+7QU5ZAAAAAElFTkSuQmCC","basicmachines/fluid_solidifier/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABgUExURQAAAFFRUUFBQU5OTnt7e1RUVD09PQAAAD8/P2tra0NDQ0ZGRktLS1ZWVpqammVlZYyMjFlZWX9/f01NTZSVlJCRkJeXmKampqmpqVJSUq+vr7Ozsra2tsvMzMnIyF5eXrkQQgYAAAABdFJOUwBA5thmAAAAZUlEQVQYGa3BRxbCMAxAQcUR+nJ6Qu/3vyXWMwdgwYz8xzy/13G8NkUrYaWYJs7QSmjgxbJcgL2EgSdsG8UgoefrSC+hozpAJyGp6k31pKpJQsr5nqskwXjsKlyCu5u5m7m7/OADLpYEZ4KMEeEAAAAASUVORK5CYII=","basicmachines/laser_engraver/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gkCDhkxg7n5LQAAAAZiS0dEAAAAAAAA+UO7fwAAAIxJREFUOMvN07EOhCAQBFC/YD/ChBKv46xA7KBipVOvgtb7/26uNpochoZNppniZZrtumbOzDOe5BYgolNSymAOMFqf+l6IUiCBmaFrgBBCBZATmCsAIkJgvnSPgLs0DhzHFzlnbNsKXhjOOUyTgVIKUsqyBfv+QYwR3ntYazG+R7yG4f+CXojitPOEP1ISzjBAijTqAAAAAElFTkSuQmCC","basicmachines/lathe/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABRUExURQAAAHx8fJiYmIqKijg4OAcHBwMDAw4ODiIlJT9CQhoaGhkZGVlwdGF5fIGBgWV8gAgICAkJCQEBAQoKCnyTl3R0dC8vLwQEBG+GikJCQjMzM7ra364AAAABdFJOUwBA5thmAAAATklEQVQYV63NRxKAIBAAQdRdBnOO/3+oB0E4W/ZxaoMxvygj9wQFqsaC+kBB3Y9WRHzIoQU4lzDhHVcaVtjCCkA37/GGQsYwvV9cwnxxA9oxA7qAPQJ/AAAAAElFTkSuQmCC","basicmachines/mixer/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAImdqv///4aKjrm5uZCnkZIAAAABdFJOUwBA5thmAAAALUlEQVQI12NgwATGYABkKCoKCgoKkc1gEgIyFMAMEUcIwwUIQAwGJSDAYjUDACwjB5+AOHUuAAAAAElFTkSuQmCC","basicmachines/mixer/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAP///4mdqoaKjrm5uWzPDPoAAAABdFJOUwBA5thmAAAARUlEQVQI12NgwAIYBQUFwLSwsbEhiMVoJOSkDGIIKyo5KRmCGEIqUIaLiwuEoQRkQRgwKSUVJTCD0UhFCawdbiDcCnQAAJUkCSwf5VaxAAAAAElFTkSuQmCC","basicmachines/polarizer/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","basicmachines/polarizer/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAVUExURQAAADMzM/9dABkdHUdHR9lbANpbAChfV8AAAAABdFJOUwBA5thmAAAAP0lEQVQI12NgwAQujgwCQMzA4KQoCMRAhlsggwAQI4mIBUIwg5AiBCOJKEMwg1gwgyAQg3iMaCLGxoxAjMVuANCQCXFPS6mBAAAAAElFTkSuQmCC","basicmachines/press/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABpUExURQAAACMiIxwcHYGBgR4dHjQzNHx8fAcHByIlJT9CQiUlJSYmJxsbGyAgICUjJBsbHDg3OJiYmDY2N4qKijg2NzU1NR0cHSwrLSAeH1lwdHR0dC4uL3yTl2V8gDAvMG+GimF5fC4tLTExMis+PWAAAAABdFJOUwBA5thmAAAAUUlEQVQYV62MNw6AMADEAiQ49N47/38kAxFhRni0fCfELwQWfQsgLwcFGFFXjVrOdTo6IwrYAZjtBICNtxixH1GYOl7SyzazhS/d+Cn0C/GFC2BCBIo/6B7aAAAAAElFTkSuQmCC","basicmachines/press/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAAAAAFZdXlFQUCsrKymXHZ8AAAABdFJOUwBA5thmAAAAJ0lEQVQI12NgIA4wKUAZLi4QmkVQ0ADMUBEUNEJlwKUYjI3RtRMCAMyxAs+7QU5ZAAAAAElFTkSuQmCC","basicmachines/pump/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAMUExURQAAANvt7jc3N4aKjqGnL8cAAAABdFJOUwBA5thmAAAAOUlEQVQI12NggAPW0NAABtalIGIqkGBbNRVI3H46gYH1+isgcW0aUOLaLCBxazmUYFu1agJEGxwAAAHOE+rPjsTFAAAAAElFTkSuQmCC","basicmachines/pump/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAAAAAAFZdXlFQUCsrKymXHZ8AAAABdFJOUwBA5thmAAAAJ0lEQVQI12NgIA4wKUAZLi4QmkVQ0ADMUBEUNEJlwKUYjI3RtRMCAMyxAs+7QU5ZAAAAAElFTkSuQmCC","basicmachines/sifter/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABIUExURQAAAEFBQU5OTktLSz8/P1FRUT09PQAAAENDQ0ZGRlZWVmVlZVlZWU1NTZSVlJCRkFJSUpeXmLOzsq+vr7a2tl5eXsvMzMnIyOT6YbAAAAABdFJOUwBA5thmAAAAWElEQVQYGa3ByxaCMBBEwQ4McxNA8e3//6n2Ibp2YZX+Y1nu6zyfprdBtvI1yCZ4sjvIRh50o6x9bK3JanestcoKcIUzUGQFLuyKLLnRhSwiMiMyI0I/eAHHBQOnaLLI4gAAAABJRU5ErkJggg==","basicmachines/sifter/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAADMzMwAAAEdHRxkdHW8lUWwAAAABdFJOUwBA5thmAAAAOUlEQVQI12NgwATGxoaCgoJAhpGRkKKiIlhEEE0EpAIsIiQEFYEzwDIiUBEVFaiIiwuaiAhYBB0AAFN3CCHDYkQ7AAAAAElFTkSuQmCC","basicmachines/wiremill/OVERLAY_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","basicmachines/wiremill/OVERLAY_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAJUExURQAAAAAAADAwMF6XCg8AAAABdFJOUwBA5thmAAAAJElEQVQI12NggAPGABEGBrYlmXBCBCTGgApEQUSWAwohiiQPAAF+BcNzx9qlAAAAAElFTkSuQmCC","iconsets/BLOCK_PLASCRETE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURd7e3uDg4OLi4tHR0dzc3NTU1Ovr6+3t7erq6tjY2Onp6cXFxS6kEd8AAAB3SURBVAgdDcGxEYJAFATQ3eMIGJMPDPmunhVYgfRAAwQWcAkxNxZiqfIePpfjOCrOKLpPqccpWRM7fEOGOaOFRxgP7OGg8xOVOZi04GdGXrWgJphEj0oUmAP2DMoc0N4chXxDI0NMHRodMmacq4rGNGPZtu11+QPJUBKnu4F+EwAAAABJRU5ErkJggg==","iconsets/BOILER_FRONT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAA8UExURQAAAM7PzlhYV4eGhi8vLkNDQ8nJyQAAAK+vr8HBwWxsbJSUlLu8u3l5esfHyNXV1qGhoT08PTY2Ns/P0L+9Ar4AAAABdFJOUwBA5thmAAAANElEQVQY02NgGFKAjYdDgJuZlwvGF2aHAiYIn58dDljBAowIAUGwAB9CQAgswIkQYGFgAABliQIIPRXITAAAAABJRU5ErkJggg==","iconsets/COKE_OVEN_CASING.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABh0lEQVQ4T32TQU8CMRCFZwV2AUFQAyZGYmJivHiUk4k/wHjw6E/w7F/1pFeUGEgUXAR2Add8Q6ZWIL5L25n2te/NNLi7Os9Gk0RAVMhJIZ/X+Ww+13EVyWwhlVLkwgEEh3s1eX7tycVJSxOfyZJwnKYyGE2kXilJOQxlJ/o9+BbHukcJ2JDOFzIcjaVRr2qCNeh9xHLUqOs6zOfczZb/Q6C3TlMpF0Md469Egi1xBH7e5kpgHhDMvkWK0fKmabLQOSNEAJ8M+BHcX7czAmjFC18n8cdOV46b+9J9H2revDGS4OH2MsOsl/5A2WuVsupu7i69sKeakRCZREZ9AbcjA7Mg4jCGmXHkgZntE6sHBKzu6NoEv/Z+3lWBYH8QayNtqju9YVJ5qfPAXkDAtEHAs1n7wBt8olf+7QO/say1jci8cgQ37VP1AGarO2sOspm+qG5Hbn6wX9UqmSdaBfocPHV6ctZqqlYDVUHz6l8gz39YM5E+8EFLr5ZvrYybNnDQYHmLIc0k/AChhAQIssBniAAAAABJRU5ErkJgggAA","iconsets/COKE_OVEN_OVERLAY_INACTIVE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABaklEQVQ4T61TMU/CQBh9tNTGxAl/QQcTcXfRuuCAg5P8ERkk6T9gwhBMJOoi6eBCgA4daMOAkRkSN2mZ5B/YxrR4XttQOds4gF9yue9y99697953GWwYmQ3xiAlKR/skjezTW0AUeGZLyGbxNHwNsTGBruvENA0cyzJcx4Xv+3BdB57nw3GccB3OCx++56FWu2YJNE0jRt/A/cMdOI6ngwsHz0c5zwfrKC9dlNC4abAE7XabGIaJVuvxT7AoiigWz9Bs3rIEqqoSy7Jg2Ta6nU7qzQE4CEmSMBgMWIJ6vR4RWDZGo5eE7CVYEAQc5PPo9nosQbVaJdO3KezZDJPJmKl5FRwoKBROkyUoikIM08SMlrD6YL/BW1RBLreL4fOQVXBVqVAX+pjP3+PXTgMHClIJypdl6kIfsnyCD+r3gvod+k49d1zaF7QfViOh4PxwL+5E8vVzNMNF+c525MAyEp247p/4v8+0roJvoI6XEUnDWtYAAAAASUVORK5CYIIA","iconsets/FLUID_IN_SIGN.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAGUExURQAAAA1BonwFlhwAAAABdFJOUwBA5thmAAAAIklEQVQI12NgAAPmAwyMDRAmgwILgwEPCAEZEACUAioAAwBN9ANJiMAQmAAAAABJRU5ErkJggg==","iconsets/FLUID_OUT_SIGN.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAGUExURQAAAA1BonwFlhwAAAABdFJOUwBA5thmAAAAIklEQVQI12NgAAPGBgbmAxAmgwAHgwEPCAEZEACUAioAAwBLoAMxHojtmwAAAABJRU5ErkJggg==","iconsets/GAS_TURBINE_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gUPERAy65LCTwAAAAZiS0dEAP8A/wD/oL2nkwAAAjpJREFUOMulU01vElEUPdMwzBCKkRmqXUhSA5tipHUlYElq2NAd6IKwgUQaamKxm0a7ADf8DruqqSzUP0C7prQJO5tIQuWjEUNmgMSKK8f7HqUUbdx0kpObmck579z7zhUMw8B1HtNVH51OpyFLMiRZgiRJkBlkGXv7+8J/BWZuzXBiLvcGbrcLyUQSXu99eBcWqHoRjUb5/933uxdCU5fJc3N38WhpCY1GHY16A4pDgepwQFVVXiuVCjqdDp6vrRn/OJBIWdc0iCYRZlGESHAQcYTM+gt4PB64XS46dmqyBecdp/Hp4wdoeherqymIZhEm0YRQKITfNGTmwOO5BxeRh3BTmzkjn88LXIANq9lqQdd1bLzcoKrh8OgI22+3cfL1BFuvt0hgnhNHAofl8tgBs986ZQJddInMarFYRL1eR7VaRTAYhN1+E5ubr2CzTRNsiMfjYwFZNqNFDrqaDq2rY/b2LA2ywcnVL1Vej48/IxDwczIDu94JB4+Xl9FqnlIrDTSbLaRSz/Ak+pSTS6USVsIrnDh9Y+jg7MfZ+BrZDH4OfmEwGBCGdXHxAYp7RVgsFsxT/wflA+y824HfH0CAMHIgjKIciUQMv8/Hh8kc+HwPUavVOMLhMNrf2mh/H4IFLJFICH/lYOwik1nnxH6/jx6BOVAUOxSVgqWoF6dPCBQKBSGdThtWq5Xu3TEk95hAjwdIsSuUDTNF3I1YLHYRZeGqbcxms4ZEyzNaInYie0+e2778CNdd5z+jvulS2PZXSwAAAABJRU5ErkJggg==","iconsets/ITEM_IN_SIGN.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAGUExURQAAAO95EgqdnaUAAAABdFJOUwBA5thmAAAAIklEQVQI12NgAAPmAwyMDRAmgwILgwEPCAEZEACUAioAAwBN9ANJiMAQmAAAAABJRU5ErkJggg==","iconsets/ITEM_OUT_SIGN.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAGUExURQAAAO95EgqdnaUAAAABdFJOUwBA5thmAAAAIklEQVQI12NgAAPGBgbmAxAmgwAHgwEPCAEZEACUAioAAwBLoAMxHojtmwAAAABJRU5ErkJggg==","iconsets/MACHINE_BRONZEBRICKS_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAAXNSR0IB2cksfwAAALpQTFRFfEU2noqEm4iDsZ+ZoIyGsmNOfkU2gkk4nVdFnIqEazwvbj0wj1A/gEc4nYmFl1NBlFJAnoyGuKSetaOdZTcrsqCarJmUrpuWo1tHt6WfsWJNrZmVtqOep15HtaGbjE08n4yHmIaAq5iTsJyYo5GLmlVCYjcqZzktmYV/XzUpbT0vql5KjU49g0k5dkIyq5eTrpqWcz8xoI6If0Y3iEw6iUw7klA+ajsupVtHhko6n1hFeUM1r52Xm1ZDlyUT7AAAALlJREFUeNoFwQViwlAARMG3SdBAgAp19+IQz9/7X4sZXHrp4aT2ah1c20Bzd0/6w3YTfKIPL+PgEwcgDCasOb6OYkmREl1K0SeFbZcOdd3a9h7zRUUXzIF/iPF3nnLF81O62QI3SBpliWIpkqSY1g4z3/ZaO9i9PsDDHGiK7t05UJA/mj/GA/amAek3liRpdJ0dIzFsV7bL3bxnzzy8wHRAtXMH9KcBVw3Ah4EB04Cyt4UWihNFSqTlGWYhGjEJwk9UAAAAAElFTkSuQmCC","iconsets/MACHINE_BRONZEBRICKS_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAEUUExURXxFNvpRAP96O+JJAP5iF/6ESf9uKZtWQ56KhP5YCepLANhGAKo3AK+dl6w3AMpBAJoxALg7AP9jGbJjTnwoAIZKOp9YRf6NV3lDNYwtAMhAAH5FNoBHOIhMOpdTQZ1XRZuIg4lMO4JJOJ2JhXYmAJRSQKCMhnQlAP+ZabGfmWo7Lp6MhquXk2ghAP64l0YWAP+thjwTAFQbALo8AP9mHf95Of5eEfxRAPBNAOZKAN5IAIYrAP9tJqg2ALI5AJwyANJEAJAuAOhLALw8AKNbR7iknqyZlKuYk6COiK6alv+OWbKgmq2ZlZyKhF81KWs8L7ajnpmFf6peSpJQPrCcmJiGgF4eAGAfAP+hdP+kef/DpjIQAPxB080AAADRSURBVBhXRUzlVgJhFBwEnLuy5O6S0tJddmN35/u/h/fj6HF+TNwYfI8G4/dew905Otjbn2cPMfrqDz+aV8HZbsLyHYe2MeivRfyp4NJywlKT3cJ4GPEHNAcsn5r4Jt4+//KKGnsDvaa5NzkUjdsxC43/PLFjmXW4i77ffcadIkmGCzxxjJJODoqbmpJXTp8zr6aM/ANxh/sKLgkPEHlsyQK319WLkqCYfCL53K05ZIHFUxBpfWx3aSS3Ggbbnil+oVIFOpDqa0c60qpLSeoiZz8E/xgbn5CQ6QAAAABJRU5ErkJggg==","iconsets/MACHINE_BRONZEBRICKS_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADVUExURf5YCcpBAKw3APpRAKo3AP6ESYwtAP5iF+JJAJoxAP96O3woAOpLALg7ANhGAP9uKWoiAPxRAHYmAP9tJjwTALo8AP9jGchAAP6NV/+ZafBNAOZKAP9kG95IAIYrANJEAJAuALw8ALI5AKg2AP5eEXonAHQlAP9mHWghAFQbAP64l/+thkYWAF4eAFodAC4OAEwYAP+RXR4JAP6KU/91MtZFAOxMAP95OehLAJwyAP+OWWAfADIQAP+kef/Dpv+hdFwdAP+YZv+BRP97Pf+CRgwDAP+gclHUILcAAAC/SURBVBjTRY7XEoJAEARHxACnCIIEUUEMYAAD5pz//5M8TijfumtqZwcnbTo6BkPScfc9r2s40C7jydU6FLaqjvxOamM6rnNlsyDWdFAwbIwmXLlEvYQ8hWoT4TnzCgVeQWCZqUu5Ki8Aw783eKHYB2F9aV4kPjpJrmQuq3DVFs3XzAdytILQgrKRUr/Nn+gle1gfoaC94LE9XHJPYRajy/YkHlJYLmD8/hM5mmuz5fsOp203FfR9dSU+4oX1+QJBBxNx0GcEnAAAAABJRU5ErkJggg==","iconsets/MACHINE_BRONZE_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADVUExURf5YCcpBAKw3APpRAKo3AP6ESYwtAP5iF+JJAJoxAP96O3woAOpLALg7ANhGAP9uKWoiAPxRAHYmAP9tJjwTALo8AP9jGchAAP6NV/+ZafBNAOZKAP9kG95IAIYrANJEAJAuALw8ALI5AKg2AP5eEXonAHQlAP9mHWghAFQbAP64l/+thkYWAF4eAFodAC4OAEwYAP+RXR4JAP6KU/91MtZFAOxMAP95OehLAJwyAP+OWWAfADIQAP+kef/Dpv+hdFwdAP+YZv+BRP97Pf+CRgwDAP+gclHUILcAAAC/SURBVBjTRY7XEoJAEARHxACnCIIEUUEMYAAD5pz//5M8TijfumtqZwcnbTo6BkPScfc9r2s40C7jydU6FLaqjvxOamM6rnNlsyDWdFAwbIwmXLlEvYQ8hWoT4TnzCgVeQWCZqUu5Ki8Aw783eKHYB2F9aV4kPjpJrmQuq3DVFs3XzAdytILQgrKRUr/Nn+gle1gfoaC94LE9XHJPYRajy/YkHlJYLmD8/hM5mmuz5fsOp203FfR9dSU+4oX1+QJBBxNx0GcEnAAAAABJRU5ErkJggg==","iconsets/MACHINE_BRONZE_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADVUExURf5YCcpBAKw3APpRAKo3AP6ESYwtAP5iF+JJAJoxAP96O3woAOpLALg7ANhGAP9uKWoiAPxRAHYmAP9tJjwTALo8AP9jGchAAP6NV/+ZafBNAOZKAP9kG95IAIYrANJEAJAuALw8ALI5AKg2AP5eEXonAHQlAP9mHWghAFQbAP64l/+thkYWAF4eAFodAC4OAEwYAP+RXR4JAP6KU/91MtZFAOxMAP95OehLAJwyAP+OWWAfADIQAP+kef/Dpv+hdFwdAP+YZv+BRP97Pf+CRgwDAP+gclHUILcAAAC/SURBVBjTRY7XEoJAEARHxACnCIIEUUEMYAAD5pz//5M8TijfumtqZwcnbTo6BkPScfc9r2s40C7jydU6FLaqjvxOamM6rnNlsyDWdFAwbIwmXLlEvYQ8hWoT4TnzCgVeQWCZqUu5Ki8Aw783eKHYB2F9aV4kPjpJrmQuq3DVFs3XzAdytILQgrKRUr/Nn+gle1gfoaC94LE9XHJPYRajy/YkHlJYLmD8/hM5mmuz5fsOp203FfR9dSU+4oX1+QJBBxNx0GcEnAAAAABJRU5ErkJggg==","iconsets/MACHINE_BRONZE_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADVUExURf5YCcpBAKw3APpRAKo3AP6ESYwtAP5iF+JJAJoxAP96O3woAOpLALg7ANhGAP9uKWoiAPxRAHYmAP9tJjwTALo8AP9jGchAAP6NV/+ZafBNAOZKAP9kG95IAIYrANJEAJAuALw8ALI5AKg2AP5eEXonAHQlAP9mHWghAFQbAP64l/+thkYWAF4eAFodAC4OAEwYAP+RXR4JAP6KU/91MtZFAOxMAP95OehLAJwyAP+OWWAfADIQAP+kef/Dpv+hdFwdAP+YZv+BRP97Pf+CRgwDAP+gclHUILcAAAC/SURBVBjTRY7XEoJAEARHxACnCIIEUUEMYAAD5pz//5M8TijfumtqZwcnbTo6BkPScfc9r2s40C7jydU6FLaqjvxOamM6rnNlsyDWdFAwbIwmXLlEvYQ8hWoT4TnzCgVeQWCZqUu5Ki8Aw783eKHYB2F9aV4kPjpJrmQuq3DVFs3XzAdytILQgrKRUr/Nn+gle1gfoaC94LE9XHJPYRajy/YkHlJYLmD8/hM5mmuz5fsOp203FfR9dSU+4oX1+QJBBxNx0GcEnAAAAABJRU5ErkJggg==","iconsets/MACHINE_CASING_BRICKEDBLASTFURNACE_INACTIVE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADeUExURZJ4W35oT7aWcmppaQMDAgQDAqOHZgMCApl+YLKSb1NSUQICAopyVq2ObaqMaqOGZlBPTlVVVLm5uHV0dIRtU5J5W4lyVotzV6qNa4eGhr+eeMCeeTU1NDg3N1JRUVJSUY92WqaJaIBpUH9pUI51WWRjY4lxVoJrUnBvb7m4uLq5uJB3Wr+eeUBAPz08PEBAQD09PWBfXzEwMCsqKkNCQikoKFVUVDs6OjIyMS4tLUxMTD49PUZFRWxsa0lJSGhnZk9PT2lpaYiHhk9OTlpaWmtqaVtaWWdmZnZ1dIFqUaQtHgsAAADHSURBVBjTNY7pVsIwEIVv2qRJSqALUCk7yq6yKYsLKKIi7/9CDil8f765c87MuajWHhytC5WrkQ88RZg8rE/QCDzPUzdXo3BfJIbDrUscB31o5+9rLATngvhw6BJuOpYZoqcAmN4+znKOzykn7NulRY6QvFlKUK39/sT8/IILHtkekTv6fJVcTmeyqQx0EKXx7v35cdKobyLb45CO3taN+uLlabmyPXzfD8NWKwxpsD3QdZRC2WQmykwrmIsBxu5uO+0SY0nmf54SEohTmE1YAAAAAElFTkSuQmCC","iconsets/MACHINE_CASING_DENSEBRICKS.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABmUExURZl+YK2ObaqMaotzV7aWcn5oT4RtU5J4W7KSb6OHZopyVpJ5W6OGZo92WqaJaIBpUH9pUI51WYlxVoJrUrqadcWie4ZvVKqNa7SVcbuadr+eeMCeeYlyVpB3WoFqUb+eeZl/YLWWck0bnjUAAAB4SURBVBhXhc43AsIwEATAla3TngI528KG/3+SQroCGqppB9O8etXhZsKVCADJMQLAAmWJMWI0MTxDGK+nown1j/vl7J2JSB48kHKTYMqiIE1U2e+2myDSrJjmd3+4r8fSHwlayqs9+PMIfx7MyR7MomDqEmKP2vwAaFkJ68RtcDcAAAAASUVORK5CYII=","iconsets/MACHINE_CASING_FROST_PROOF.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gYXEBoDk2xFaAAAAMlQTFRFH1iIIFuNIl6RI2KYJGWdJWaeJmqjJ22oKHGvKXKwKnW1Kna3K3i6LXzALX7CLX/ELoDFLoHHL4PKL4TMMIXNNIjPNYnQN4rQOYvQOozRPI3RQY/SQpDTR5PUSZTUTJbVTpfVT5jWU5rWVJvXVpzXWZ7YW5/YYKHZYaLaZqXbbancbqrdcazeda7edq/ferHffbPgfrPhgLThiLnjjbzkj73kkr/lk8DmlcHmmMPnoMfppMnppcrqqczqrM7rr9DsstLtvtnv////9FlFYAAAAAFiS0dEQhDXPfQAAACASURBVBgZBcHBbcNAEMDAzwIGdKeC0n89hiUjv4hkZuaHTFXzyWFlqkZ4jX0Pv4u6F9dmatGmWHjKJPUUYcLA9ygN8306dWSGxqkjpqGBNpiqhipTqhqiT6P3JgPlOhrdTwaK63HSDBSB5o979z6Vz/L31dSOU2E/vGz8AJlm1T+x0uUELvrm1wAAAABJRU5ErkJggg==","iconsets/MACHINE_CASING_SOLID_STEEL.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gYJDRgeZmRbvAAAAAZiS0dEAP8A/wD/oL2nkwAAAWVJREFUOI1tk12SozAQgzUpzrATQpK9/wVyF4Ih92h9rtkH/8Ak+0DZxm5JVstfj8fjB5CxHAgsQA6LbNnItuz6v80zwtYA6P73XgpshRGEwhbRgF1GN8AQRiklnexyYJ5nhS07NM/LL2ZjLcvS1yklhUOGCoB1v91FPXC7XYsaohdN01Sk27pMF1HnQ7kvfZMqOShyG+hRTVMXuCpw6Pl8KqoHBhEIx3+L15Q64dDQrtdJphh0PPyhwNZlHItCrIF+sJlGWbO7vRcfjUWENeybsW84FBzZd/CSEwujMEcAV7bYgwR7MTUnTXGEMujU0rWkJBOdFd7uHvu4bZtsFK5dwKHrNNXEUQP1/lE7ZI3ncw2SNTTGgM7aI/wGQA1WC1E2OrXeryl15nVbP4q3bS2+hPV6vWSKHwM5C0fpbZT2jeP4cYXzeFZUZd9/vsujszUQ1rImZeeuIOfDs63POFqXoJuN0T8+QMq4dKfz4wAAAABJRU5ErkJggg==","iconsets/MACHINE_HEATPROOFCASING.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gYJCxcjvRl30AAAAAZiS0dEAIwALQAAvcAzXwAAAZRJREFUOMuFk8tOQkEMhseTsyQqaiQQNdHgQlz4yi5c+iiiJsRgFBDFeHkBz/Ryom3nIhiIC9Ke6Xxt/2lZO7+8+KaaHTI6JDLL8g1igdBpjDicg8TZfHJQk52X+tE7O3UeQS6AQQp78TXm0duZxjEmrchbbDoYuYI4BK+v+hm+7d9EKMB6+WEwzPDTcOSokk6RXIEc2j/qHefK5qduYqJ2dz9X3t1rG8xkEkIHqqeSi6q5girotASw0HaqTICuptoV9lix7aQ5WFgKK/hyPxFLlqjUF9fKhyfdBTg9mGdYgPW302kFX98gPVKCw/cvbKOcgxnZLHrxiV2pmiGObJXmpbBUr1UCRmDZnFfCPj0kyx5IBwrPz/m/yu/T1+ijKyGu7/yc8QvsInowOPihsiba2GqGMbKMkaP2v3NWWOec4Th7HV+2cl4opPDk7jG3/TwcW2VNkuC38cwgPfucfQRpssW2SJqkddDJmtOq2rJo2xW4ze1mltRYbwQJEMeo/6q023qhlvmSfYt+CGcpxrGywrXYHwNNx98CMlA2AAAAAElFTkSuQmCC","iconsets/MACHINE_HV_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSChEfODZFGAAAAAZiS0dEAP8A/wD/oL2nkwAAAapJREFUOMt9U71uwjAQPhHHWZCQSPdCEwUJRugLlI03KCxl5A3oWB6BkY0+Bd3IVEaQKF3oUJYGiakMifhLfXZinIA6nHyX++67784xGQwGISEENE0DPDOZDMRxbNfiGEeOxyM4jgOn0wnQR1P93W4Hvu/Lb2quXC4Lgl7vBXRCQac66DqFdvuJA1Uw2mw2A0oFjjI8NuYE3e7zRUHaD8MQKpWKjA+HA/c5Qb/fZ511bq1W6ypRfK7XHleJWEnQ6XQu5LruOCIVkq07i2PyeTOhghMMX4dAI3Cj0YCx67KYSgLMed4aTDMPgR9wQsMwOAlBluZjM6GAsus5d2dXxX3CcxrRYL/fQxAE5xHSSyNUdKesmN9OtJ/0buQIb6ORnLVarUbjnA3HIUwBFuRyOTEWVZb4UK9LVjTLsuDH8yRBXIyYzWYjsbZtC4LJ5J0BDd7Zsi0OuDGT247l3xYKDEc4frv9FUus1e4lKH3v6on2tVzKPUgFi8+FMjeFbDYrC1TSklOKfneBW62+BYFt2RdS1a5xPP+YJ3LFYlEQTKfTf58zGnZNP2ms/QPhZrS/ffkz1AAAAABJRU5ErkJggg==","iconsets/MACHINE_HV_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSChEjF1k5nwAAAAZiS0dEAP8A/wD/oL2nkwAAAapJREFUOMt9U71uwjAQPhHHWZCQSPdCEwUJRugLlI03KCxl5A3oWB6BkY0+Bd3IVEaQKF3oUJYGiakMifhLfXZinIA6nHyX++67784xGQwGISEENE0DPDOZDMRxbNfiGEeOxyM4jgOn0wnQR1P93W4Hvu/Lb2quXC4Lgl7vBXRCQac66DqFdvuJA1Uw2mw2A0oFjjI8NuYE3e7zRUHaD8MQKpWKjA+HA/c5Qb/fZ511bq1W6ypRfK7XHleJWEnQ6XQu5LruOCIVkq07i2PyeTOhghMMX4dAI3Cj0YCx67KYSgLMed4aTDMPgR9wQsMwOAlBluZjM6GAsus5d2dXxX3CcxrRYL/fQxAE5xHSSyNUdKesmN9OtJ/0buQIb6ORnLVarUbjnA3HIUwBFuRyOTEWVZb4UK9LVjTLsuDH8yRBXIyYzWYjsbZtC4LJ5J0BDd7Zsi0OuDGT247l3xYKDEc4frv9FUus1e4lKH3v6on2tVzKPUgFi8+FMjeFbDYrC1TSklOKfneBW62+BYFt2RdS1a5xPP+YJ3LFYlEQTKfTf58zGnZNP2ms/QPhZrS/ffkz1AAAAABJRU5ErkJggg==","iconsets/MACHINE_HV_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSChEh+VdYswAAAAZiS0dEAP8A/wD/oL2nkwAAAapJREFUOMt9U71uwjAQPhHHWZCQSPdCEwUJRugLlI03KCxl5A3oWB6BkY0+Bd3IVEaQKF3oUJYGiakMifhLfXZinIA6nHyX++67784xGQwGISEENE0DPDOZDMRxbNfiGEeOxyM4jgOn0wnQR1P93W4Hvu/Lb2quXC4Lgl7vBXRCQac66DqFdvuJA1Uw2mw2A0oFjjI8NuYE3e7zRUHaD8MQKpWKjA+HA/c5Qb/fZ511bq1W6ypRfK7XHleJWEnQ6XQu5LruOCIVkq07i2PyeTOhghMMX4dAI3Cj0YCx67KYSgLMed4aTDMPgR9wQsMwOAlBluZjM6GAsus5d2dXxX3CcxrRYL/fQxAE5xHSSyNUdKesmN9OtJ/0buQIb6ORnLVarUbjnA3HIUwBFuRyOTEWVZb4UK9LVjTLsuDH8yRBXIyYzWYjsbZtC4LJ5J0BDd7Zsi0OuDGT247l3xYKDEc4frv9FUus1e4lKH3v6on2tVzKPUgFi8+FMjeFbDYrC1TSklOKfneBW62+BYFt2RdS1a5xPP+YJ3LFYlEQTKfTf58zGnZNP2ms/QPhZrS/ffkz1AAAAABJRU5ErkJggg==","iconsets/MACHINE_LV_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAACXBIWXMAAAsSAAALEgHS3X78AAAAw1BMVEWenp6hoaGWlparq6uRkZGcnJyurq6mpqaoqKiOjo6UlJSZmZmjo6OwsLCJiYmMjIyEhISYmJizs7OkpKSlpaWBgYG4uLiTk5OHh4e1tbW+vr6xsbGbm5upqamgoKCLi4t+fn66urqPj4+2traGhoZ7e3tubm5xcXGampq7u7vBwcGysrKtra20tLSQkJCIiIh0dHR1dXV8fHx3d3dra2t4eHh/f3+5ubmdnZ2np6fAwMCXl5fExMTLy8vFxcXHx8fIyMjDFwDtAAAAt0lEQVQY00WNVxKCQBAFH0EkKCwKSFKCgoo553D/U7kLFH529fQbzMBZN0EKVs7cL96fFx53f+6Me11JGLb7HL5Q/cTxFpRlq8Oh9YSYVF5mvmUWUC5eL2DMvMb7iLymp6wm2NT3I4QaPxAdkO7/XhUVD/ay3jcZGwFi2jfe0CVklWc9ZVfAifmQ+TTSXSJjS/dpX3liW5jSf2wvNfQJsc8c8tKvlZLj/RXHfLo7ZLFN3EgRVXP2A1uXEX4IPye0AAAAAElFTkSuQmCC","iconsets/MACHINE_LV_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAACXBIWXMAAAsSAAALEgHS3X78AAAAw1BMVEWenp6hoaGWlparq6uRkZGcnJyurq6mpqaoqKiOjo6UlJSZmZmjo6OwsLCJiYmMjIyEhISYmJizs7OkpKSlpaWBgYG4uLiTk5OHh4e1tbW+vr6xsbGbm5upqamgoKCLi4t+fn66urqPj4+2traGhoZ7e3tubm5xcXGampq7u7vBwcGysrKtra20tLSQkJCIiIh0dHR1dXV8fHx3d3dra2t4eHh/f3+5ubmdnZ2np6fAwMCXl5fExMTLy8vFxcXHx8fIyMjDFwDtAAAAt0lEQVQY00WNVxKCQBAFH0EkKCwKSFKCgoo553D/U7kLFH529fQbzMBZN0EKVs7cL96fFx53f+6Me11JGLb7HL5Q/cTxFpRlq8Oh9YSYVF5mvmUWUC5eL2DMvMb7iLymp6wm2NT3I4QaPxAdkO7/XhUVD/ay3jcZGwFi2jfe0CVklWc9ZVfAifmQ+TTSXSJjS/dpX3liW5jSf2wvNfQJsc8c8tKvlZLj/RXHfLo7ZLFN3EgRVXP2A1uXEX4IPye0AAAAAElFTkSuQmCC","iconsets/MACHINE_LV_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAACXBIWXMAAAsSAAALEgHS3X78AAAAw1BMVEWenp6hoaGWlparq6uRkZGcnJyurq6mpqaoqKiOjo6UlJSZmZmjo6OwsLCJiYmMjIyEhISYmJizs7OkpKSlpaWBgYG4uLiTk5OHh4e1tbW+vr6xsbGbm5upqamgoKCLi4t+fn66urqPj4+2traGhoZ7e3tubm5xcXGampq7u7vBwcGysrKtra20tLSQkJCIiIh0dHR1dXV8fHx3d3dra2t4eHh/f3+5ubmdnZ2np6fAwMCXl5fExMTLy8vFxcXHx8fIyMjDFwDtAAAAt0lEQVQY00WNVxKCQBAFH0EkKCwKSFKCgoo553D/U7kLFH529fQbzMBZN0EKVs7cL96fFx53f+6Me11JGLb7HL5Q/cTxFpRlq8Oh9YSYVF5mvmUWUC5eL2DMvMb7iLymp6wm2NT3I4QaPxAdkO7/XhUVD/ay3jcZGwFi2jfe0CVklWc9ZVfAifmQ+TTSXSJjS/dpX3liW5jSf2wvNfQJsc8c8tKvlZLj/RXHfLo7ZLFN3EgRVXP2A1uXEX4IPye0AAAAAElFTkSuQmCC","iconsets/MACHINE_MV_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQREDc3zVnnjgAAAAZiS0dEAAAAAAAA+UO7fwAAAWdJREFUOMt9U0t2wjAMVGPZhB6EBQ0HyKqck5NQegnuUOAAJHl55EMqKZZxAu3Cz3b0mRmN87bb7QZEBGMM8J4kCehd16u75mHf97BareB+vwOfecXnpmmgruvwLY6t1+uxAX/cf+3BogW0lnYDWbaZJF+vV0G0FHfOQVVV0HXd2IAPXMxBw7ToPGekxeOOUsMxaTAMgyAjBTaErIUxZdbeti0s05RAHgCBgWNkY+Xj6eckzdCzsdaAWxDtsvISURoECXz5yLJHV19sQxMUiRy7XC6BmUhTLbFmRkCvVxHRN9BCzcVX1iFNGUmzDk1keNpx/kRCvNjGUTuKKzGDOVgS+3y7Nd6yuNh5i1Hy8jyH7fZz6kIoIuSGrCqK4unl6a6DDXJZh9B2hEY2pst3STqfz5NCRpaXitMGib4DfgNsn3Mj3flc9KHxYHk9DbEsC1A28bD0/n04/O3C8Xj893c23tL5L821v/VWrmyGyb6mAAAAAElFTkSuQmCC","iconsets/MACHINE_MV_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQREDc2ul7XGAAAAAZiS0dEAAAAAAAA+UO7fwAAAWdJREFUOMt9U0t2wjAMVGPZhB6EBQ0HyKqck5NQegnuUOAAJHl55EMqKZZxAu3Cz3b0mRmN87bb7QZEBGMM8J4kCehd16u75mHf97BareB+vwOfecXnpmmgruvwLY6t1+uxAX/cf+3BogW0lnYDWbaZJF+vV0G0FHfOQVVV0HXd2IAPXMxBw7ToPGekxeOOUsMxaTAMgyAjBTaErIUxZdbeti0s05RAHgCBgWNkY+Xj6eckzdCzsdaAWxDtsvISURoECXz5yLJHV19sQxMUiRy7XC6BmUhTLbFmRkCvVxHRN9BCzcVX1iFNGUmzDk1keNpx/kRCvNjGUTuKKzGDOVgS+3y7Nd6yuNh5i1Hy8jyH7fZz6kIoIuSGrCqK4unl6a6DDXJZh9B2hEY2pst3STqfz5NCRpaXitMGib4DfgNsn3Mj3flc9KHxYHk9DbEsC1A28bD0/n04/O3C8Xj893c23tL5L821v/VWrmyGyb6mAAAAAElFTkSuQmCC","iconsets/MACHINE_MV_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQREDc0VFC2NAAAAAZiS0dEAAAAAAAA+UO7fwAAAWdJREFUOMt9U0t2wjAMVGPZhB6EBQ0HyKqck5NQegnuUOAAJHl55EMqKZZxAu3Cz3b0mRmN87bb7QZEBGMM8J4kCehd16u75mHf97BareB+vwOfecXnpmmgruvwLY6t1+uxAX/cf+3BogW0lnYDWbaZJF+vV0G0FHfOQVVV0HXd2IAPXMxBw7ToPGekxeOOUsMxaTAMgyAjBTaErIUxZdbeti0s05RAHgCBgWNkY+Xj6eckzdCzsdaAWxDtsvISURoECXz5yLJHV19sQxMUiRy7XC6BmUhTLbFmRkCvVxHRN9BCzcVX1iFNGUmzDk1keNpx/kRCvNjGUTuKKzGDOVgS+3y7Nd6yuNh5i1Hy8jyH7fZz6kIoIuSGrCqK4unl6a6DDXJZh9B2hEY2pst3STqfz5NCRpaXitMGib4DfgNsn3Mj3flc9KHxYHk9DbEsC1A28bD0/n04/O3C8Xj893c23tL5L821v/VWrmyGyb6mAAAAAElFTkSuQmCC","iconsets/MACHINE_STEEL_BOTTOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSDScew2LyfgAAAAZiS0dEAP8A/wD/oL2nkwAAAS9JREFUOI2FU1uOgzAMDA5almqDuMByME7KSTY//FIJrpBEXdvNm9IKWTiJZ+Jx7FYNw0MCCCmlNxAATx/8PuTneAbS7+O/JfA8z8I5J4w1whrLvrX2ozVNgwTIRIBlWYRSim2aJgxAMlsSresaY2jdfXdPAlqEg3BYg+uY/TjEDeW0pI9uU2pA+8kIzpbHbNvGdfAZOEz797NulLofO4LvLDsjuAIknwCuKjI9gJdwATYJbIxBgvKF4CoDV4AtPm8ion3jiCxIAPnmZgK7U28EH1iCTBKcL1RMm8EmgU1Zl6KIeZMEgKtufuA3jiPHaK25raOEukliLTJ5ARx6hWchSMib5M7v/L6RThIo1QNv3i7AZFr/FWvJ04gENFVfXSf6vo9jG0eZR/jFWPtx/gekY+COJ6ptPQAAAABJRU5ErkJggg==","iconsets/MACHINE_STEEL_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSDScWzbl6TAAAAAZiS0dEAP8A/wD/oL2nkwAAAS9JREFUOI2FU1uOgzAMDA5almqDuMByME7KSTY//FIJrpBEXdvNm9IKWTiJZ+Jx7FYNw0MCCCmlNxAATx/8PuTneAbS7+O/JfA8z8I5J4w1whrLvrX2ozVNgwTIRIBlWYRSim2aJgxAMlsSresaY2jdfXdPAlqEg3BYg+uY/TjEDeW0pI9uU2pA+8kIzpbHbNvGdfAZOEz797NulLofO4LvLDsjuAIknwCuKjI9gJdwATYJbIxBgvKF4CoDV4AtPm8ion3jiCxIAPnmZgK7U28EH1iCTBKcL1RMm8EmgU1Zl6KIeZMEgKtufuA3jiPHaK25raOEukliLTJ5ARx6hWchSMib5M7v/L6RThIo1QNv3i7AZFr/FWvJ04gENFVfXSf6vo9jG0eZR/jFWPtx/gekY+COJ6ptPQAAAABJRU5ErkJggg==","iconsets/MACHINE_STEEL_TOP.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQSDScaxA82ZwAAAAZiS0dEAP8A/wD/oL2nkwAAAS9JREFUOI2FU1uOgzAMDA5almqDuMByME7KSTY//FIJrpBEXdvNm9IKWTiJZ+Jx7FYNw0MCCCmlNxAATx/8PuTneAbS7+O/JfA8z8I5J4w1whrLvrX2ozVNgwTIRIBlWYRSim2aJgxAMlsSresaY2jdfXdPAlqEg3BYg+uY/TjEDeW0pI9uU2pA+8kIzpbHbNvGdfAZOEz797NulLofO4LvLDsjuAIknwCuKjI9gJdwATYJbIxBgvKF4CoDV4AtPm8ion3jiCxIAPnmZgK7U28EH1iCTBKcL1RMm8EmgU1Zl6KIeZMEgKtufuA3jiPHaK25raOEukliLTJ5ARx6hWchSMib5M7v/L6RThIo1QNv3i7AZFr/FWvJ04gENFVfXSf6vo9jG0eZR/jFWPtx/gekY+COJ6ptPQAAAABJRU5ErkJggg==","iconsets/OVERLAY_ENERGY_IN_MULTI.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAACKUExURQAAAL+/v9nZ2a6urqKhoaGhob6+vsvLy9jY2LKysq+wsK+vr/Pz9PTz9OXl5OXm5szMzLGxsLu8u76+veno6efo6Ojp6KWkpfT086Ojo8rKyvLy8sfGxuXl5dfX2MzNzb28vN3d3uTk5LCwsObn5tzc3NbW1tHR0crKycbGxtra2bq7utLS0sDAv2m9pTUAAAABdFJOUwBA5thmAAAAUUlEQVQYGa3BVQKCABQAwaVDQpFuBQSJ+1+Pr8cJmOE2XvzJQ5WLn7KPPBVEAvUKDmKa/1t3OBmi+v6WxrbeiAD6FlyEbTGUPHQu5quINIO7nEdgBCS33xglAAAAAElFTkSuQmCC","iconsets/OVERLAY_FRONT_ELECTRIC_BLAST_FURNACE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","iconsets/OVERLAY_FRONT_IMPLOSION_COMPRESSOR.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","iconsets/OVERLAY_FRONT_OIL_DRILL.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","iconsets/OVERLAY_FRONT_STEAM_ALLOY_SMELTER.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAMUExURQAAADAwMAAAABsbGwVWT4wAAAABdFJOUwBA5thmAAAAKUlEQVQI12NgQAKhDgwMjPUBDKyhry4wsP9dNYGBbSWQYA0NDWAgEgAAyBYIoAw1mbMAAAAASUVORK5CYII=","iconsets/OVERLAY_FRONT_STEAM_COMPRESSOR.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAACHUExURQAAAAgICBoaGhkZGS8vLwMDAzY2NiIlJT9CQgcHBzExMUBAQEJCQjg4OAkJCURERBEQERcXF0FBQnx8fIGBgVlwdHyTlz49PQwMDC0tLTAwMEFBQZiYmA4ODmF5fDk4OGV8gIqKijc3NxYWFhUVFQEBATMzMxsbGwQEBAoKCm+Gih4eHnR0dFgHlKgAAAABdFJOUwBA5thmAAAAY0lEQVQY02NgoArgQAB2iACnFJcKkygrGwsnVEBWUZ5ZgY+Vm4URKiAjzSWnzsjKxiMGFVBi4WXWBqrQUoMKSLBwKTPpIJkhKM7LJKKpwc0jALNFSFKYmVGVjR+qgh0JkOURAM/1BaNLEXVKAAAAAElFTkSuQmCC","iconsets/OVERLAY_FRONT_STEAM_EXTRACTOR.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAC0UExURQAAANT098ri5cjf4srh5L7U109cXzY1NQAAAMfe4bvQ1HBwcO36+8ng4+rz9MXb38LZ3Mfd4Mnn68Lu9cLY27/o7sXc387t8dPy9r/V2LrQ1Mfl6dDv88Pr8sLf5LnO0bHFyeby873S1sHs9LTQ1aS2u7LFyrzR1a3BxbXQ1qvFy97m6KW3vK7Cxqa5vanDyam9wbLN0qO1ump+ga7Jzqq9wW16fKe6v0ldYXOJjWFhYVRscNbscooAAAABdFJOUwBA5thmAAAAf0lEQVQYGW3BRRLDQAwEwDFKa4eZmZnx//+KqiZHdyOLcw6m3CiCwlwIEzRroIIXwpQqdZDv5WGiagTyWwFMuxuBXK8Pkww6oMl0CZOMh6DFeg+znY1Aq/Md5rCZg063J8zluAPJKxZ5y+MqIIlVv6ppLCDRVFVTVQHJR/6Q4Qe5BQgJONLnDQAAAABJRU5ErkJggg==","iconsets/OVERLAY_FRONT_STEAM_HAMMER.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABCUExURQAAAFFRUVRUVJqamj8/P2traz09PQAAAIyMjHt7e39/f0FBQWVlZVlZWVZWVk5OTl5eXktLS0ZGRkNDQ1JSUk1NTUzR+vYAAAABdFJOUwBA5thmAAAAWElEQVQYV63LOQ6AMAxE0QRMJiEL+/2vysgGCdHQ8CW7eLKd+6VS5tra7tmkUAH0DIgGnhAZ96GwEEZGSAor7i7Y3pCBpD1g0BCzQuBxx/giCiISgo3BRyfCwwOMdfxz9gAAAABJRU5ErkJggg==","iconsets/OVERLAY_FRONT_STEAM_MACERATOR.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABRUExURQAAAHh6f2BgZFxcYEpKSl5eYnZ4fQAAAG9vb11dYYKGioCEiHN1eltbX4GFiXd5fn6Chnp9gXt/g3l7gHJ0eWxtcm5vdF9fY2hobWRkaGNjZ8a/MaQAAAABdFJOUwBA5thmAAAAUElEQVQYGa3BtwGAMAwEwLctI2RyDvsPCt+opuAO/yilb8Z5WkIYWlCjrgUFdStoV7eBTnUH6FIXQbe6DIq1i6AkItVLRDIom3WdWUpmGR886QMD4RamGOEAAAAASUVORK5CYII=","iconsets/OVERLAY_FRONT_VACUUM_FREEZER.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAkUExURQAAABkdHTMzM0dHR8DAwICAgABAAP8AACs/IP+AgAAAAACAALdqWrEAAAABdFJOUwBA5thmAAAAVElEQVQI12NgwATGRgrMxkpAhkWbAPOqjUCGRpoAk6sjkKEGZIQEAhlKSlARzelQEc1yAUZBQSBDvVyAQUAAyBAEAjADDATAuoBAEchQBMkJYrEbAKVbCxxqaL5LAAAAAElFTkSuQmCC","iconsets/OVERLAY_MAINTENANCE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAABdUExURQAAAFVVVV9fX3d5fltbW2NjY4CEiJeXl29vb0RERH2BhZOTk2ZmZn+Dh36ChmBgYFRUVFxcXIuLi4GFiZubm3yAhF5eXlhYWIyMjHh6f3t+gnp9gZaWlpCQkFlZWRPWLMEAAAABdFJOUwBA5thmAAAAbUlEQVQYV43ISRYCIQwFwAA/tGGGHh3vf0wXjTx3Wssi+sP05YzLkHpA11o37OJ6FHjAAyMAD/hXkthDqXYcz91JGqFaK2WVtYfW22PS2YrtwczLwppHhBCYc4bcesiHISIiE+fZ2ujuV3PGD2/huAWVzz26rQAAAABJRU5ErkJggg==","iconsets/OVERLAY_MUFFLER.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQWES4zzSHYAQAAAAZiS0dEAP8A/wD/oL2nkwAAALZJREFUOMvl0ssKgzAQhWHfwUvipS6VBhQrilYLqZYE9KnOm09tCgVXKt21i1l+/8AkFhFZ34z1w4F5nqC1xmMcIeUdhwLTtGClEccxnaKIbrcebXvFrsALK6UMjhYchAH5Pqe6rlGWJTYDKxyExDknj3nkui7leb4dGIcBbxwYzBgz2LZtEkJsB6SU6LoeZrO3bHacD07TBLuO2DQtqqrCGqc49IxFcUGWZRBngSRJ8I9fee88AeDgoM3FqSHzAAAAAElFTkSuQmCC","iconsets/OVERLAY_PIPE_IN.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQWES0RM2zKJgAAAAZiS0dEAP8A/wD/oL2nkwAAAJtJREFUOMvlk0EKg1AMRGfhrdSzVdGj2AtIL+e8AbvQUu2iCm4KDYT8zbxMfkgxz7OuRKGL8YOAYbg3YNmWsTDL25aN+r5rvgKM9RjHGyASJRGgEJV12R46iC2yFxMEkc3xCJMt2ItDlCDwMQDYiKM4KwQxnQDYXiFLZzbVnBgBvxysmTfEPuMAq6rqFk+aPtbImU/suv2e/+AWniXtvzrPT/2XAAAAAElFTkSuQmCC","iconsets/OVERLAY_PIPE_OUT.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gQWES0RM2zKJgAAAAZiS0dEAP8A/wD/oL2nkwAAAJtJREFUOMvlk0EKg1AMRGfhrdSzVdGj2AtIL+e8AbvQUu2iCm4KDYT8zbxMfkgxz7OuRKGL8YOAYbg3YNmWsTDL25aN+r5rvgKM9RjHGyASJRGgEJV12R46iC2yFxMEkc3xCJMt2ItDlCDwMQDYiKM4KwQxnQDYXiFLZzbVnBgBvxysmTfEPuMAq6rqFk+aPtbImU/suv2e/+AWniXtvzrPT/2XAAAAAElFTkSuQmCC","iconsets/OVERLAY_QTANK.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAABACAMAAAAkowekAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAADDUExURQAAANfX2Nb//y8vLm9vb5eXl6enpwAAABL//0ZHRzc2Nzc3Nz4/Pj8/PldXVl5eX09OTk9OT13//1dWVmdmZ4eHh35/foaHh19eX3d3dmZnZ39/f4+Pj46Pj3d3d5+en8D//5+fn9/f4K+vr66vr0b//7e3t7e3uJb//9DP0M/Pzzb//7/AwL/Av8fHyMfIyI7//1H//4X//83//yT//8f//7X//3L//53//9L//7r//6T//2n//9D//3z//7D//6r//4UdNhMAAAABdFJOUwBA5thmAAAA10lEQVQ4y82TyQ6CMBBAsYqDu9Z9rwuK4gK4gLv//1W2Y2JPVA6aMMeX16R9mWpahBknFpv1bJoe6v0mggR8poFgCZZ3NQ0wDGgj2EojhWAF1AQDQQ3BXBolBBN+mo8ARQRpaZQRjISBFmQQ6NLII+hJkEVQ7w5SnVa1kinkktqvJkoPfkeTUuqG9xDv2H/pwYsJR9XjnSz2PRzH8V1btR+uF0DgqHrYvvVgjJ3De1hwZAfY7eLfg5ATPO+2ogc3DkePb0BoD0IIMIt/u9Ae3LjBhdp/6/ECuiwh61o9C+UAAAAASUVORK5CYII=","iconsets/OVERLAY_SIDE_FLUIDTANK.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAPUExURQAAACIiIr7Y3Ki/xeHs7ixzg/wAAAABdFJOUwBA5thmAAAALUlEQVQI12NgwAKMlZSMwQxDQUFhMENRRFAIwnCEMQSJYYjAGI5CqAbCrUADAHUIBS+F7GXvAAAAAElFTkSuQmCC","iconsets/OVERLAY_TOP_CLEANROOM.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAAJUExURQAAAIaKjomdqqFS6ZAAAAABdFJOUwBA5thmAAAALElEQVQI12NgQADREAYGxtBQBwbGzEwHBtaVWQFQIjQURsDFwErAisHa4AAA7WEMbd5mg9wAAAAASUVORK5CYII=","iconsets/OVERLAY_TOP_FLUIDTANK.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAA8UExURQAAAKi/xLfQ1a/IzOHs7sHd3qnAxiIiIr7Z3ai/xbrU2L3W2r7Y3L7X3KvDx6vDyLnS173n7sTw98Tk5UH/04gAAAABdFJOUwBA5thmAAAAV0lEQVQYV43LSRaCQBBEwQBsUpnV+9/VRUO7JXY/XxU3LM9mAWtOj6xgTt61M4Mpn7MzgSNX5wB9mh4M/2EAe1LOlx1sV5dsYCz1viRjHVrnC7pX07nhB1AaBEXnNI2lAAAAAElFTkSuQmCC","iconsets/STEAM_TURBINE_SIDE.png":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAAAB3RJTUUH3gUPERAy65LCTwAAAAZiS0dEAP8A/wD/oL2nkwAAAjpJREFUOMulU01vElEUPdMwzBCKkRmqXUhSA5tipHUlYElq2NAd6IKwgUQaamKxm0a7ADf8DruqqSzUP0C7prQJO5tIQuWjEUNmgMSKK8f7HqUUbdx0kpObmck579z7zhUMw8B1HtNVH51OpyFLMiRZgiRJkBlkGXv7+8J/BWZuzXBiLvcGbrcLyUQSXu99eBcWqHoRjUb5/933uxdCU5fJc3N38WhpCY1GHY16A4pDgepwQFVVXiuVCjqdDp6vrRn/OJBIWdc0iCYRZlGESHAQcYTM+gt4PB64XS46dmqyBecdp/Hp4wdoeherqymIZhEm0YRQKITfNGTmwOO5BxeRh3BTmzkjn88LXIANq9lqQdd1bLzcoKrh8OgI22+3cfL1BFuvt0hgnhNHAofl8tgBs986ZQJddInMarFYRL1eR7VaRTAYhN1+E5ubr2CzTRNsiMfjYwFZNqNFDrqaDq2rY/b2LA2ywcnVL1Vej48/IxDwczIDu94JB4+Xl9FqnlIrDTSbLaRSz/Ak+pSTS6USVsIrnDh9Y+jg7MfZ+BrZDH4OfmEwGBCGdXHxAYp7RVgsFsxT/wflA+y824HfH0CAMHIgjKIciUQMv8/Hh8kc+HwPUavVOMLhMNrf2mh/H4IFLJFICH/lYOwik1nnxH6/jx6BOVAUOxSVgqWoF6dPCBQKBSGdThtWq5Xu3TEk95hAjwdIsSuUDTNF3I1YLHYRZeGqbcxms4ZEyzNaInYie0+e2778CNdd5z+jvulS2PZXSwAAAABJRU5ErkJggg=="}};</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const DATA = window.BASE_3D;
+// the blocks come as columns (run_report.charts.encodeBlockColumns): x, y, z and placed are differences from the row
+// before, and placed is in millionths of an IGT day. A row ends at the next row at its position, or at a creative break
+function decodeBlocks(columns) {
+  const rows = new Array(columns.count);
+  const breaks = new Map(columns.breaks);
+  const open = new Map();
+  let x = 0, y = 0, z = 0, placed = 0;
+  for (let i = 0; i < columns.count; i++) {
+    x += columns.x[i]; y += columns.y[i]; z += columns.z[i]; placed += columns.placed[i];
+    const row = { x, y, z, ...columns.types[columns.type[i]], placedIgtDays: placed / 1e6, goneIgtDays: null, goneBy: null };
+    const key = `${x},${y},${z}`;
+    const before = open.get(key);
+    if (before) { before.goneIgtDays = row.placedIgtDays; before.goneBy = 'replaced'; }
+    if (breaks.has(i)) {
+      row.goneIgtDays = breaks.get(i) / 1e6;
+      row.goneBy = 'creative break';
+      open.delete(key);
+    } else {
+      open.set(key, row);
+    }
+    rows[i] = row;
+  }
+  return rows;
+}
+const BLOCKS = decodeBlocks(DATA.blocks);
+// the audit mod versions of the run's fingerprints. The limitations are those of the latest version
+const AUDIT_VERSIONS = DATA.auditVersions?.length ? DATA.auditVersions.join(', then ') : 'version not logged';
+const LATEST_AUDIT = DATA.auditVersions?.at(-1) ?? 'this audit log';
+document.querySelectorAll('.auditVersion').forEach((el) => { el.textContent = LATEST_AUDIT; });
+// the run line: the players who joined, in first-join order, and the milestone the run was submitted for
+const runParts = [];
+if (DATA.runners?.length) runParts.push(`${DATA.runners.length > 1 ? 'Runners' : 'Runner'}: ${DATA.runners.join(', ')}`);
+if (DATA.milestone) runParts.push(`Milestone: ${DATA.milestone}`);
+document.getElementById('run').textContent = runParts.join(' | ');
+document.getElementById('run').hidden = !runParts.length;
+// on the gtnh-runs site (scripts/publish_run.py) the run list is two folders up. Elsewhere the link stays hidden.
+// The list must parse as a JSON array, because some hosts answer a missing path with a page and status 200
+fetch('../../runs.json')
+  .then((response) => response.json())
+  .then((runs) => { document.getElementById('home').hidden = !Array.isArray(runs); })
+  .catch(() => {});
+// tier order and colors match the 2D base map of the charts dashboard. Not logged and No tier get the Stone grey
+const TIERS = ['Stone', 'Steam', 'ULV', 'LV', 'MV', 'HV', 'EV', 'IV', 'LuV', 'ZPM', 'UV', 'UHV', 'UEV', 'UIV', 'UMV', 'UXV', 'MAX'];
+const TIER_LIGHT = ['#808488', '#482808', '#e60986', '#42d300', '#1a588c', '#01b2f8', '#9009b6', '#049d20', '#fe3dff', '#1b6700', '#fe81bc', '#240cf5', '#fc5f18', '#8375fd', '#9e3938', '#c6a10f'];
+const TIER_DARK = ['#f8f8d8', '#a85820', '#c677b4', '#56f420', '#fe3cfe', '#278600', '#fdb3e3', '#0a60be', '#b09512', '#0ee7ff', '#a60d90', '#f0cc00', '#3399fe', '#fb1946', '#6a04f7', '#1bad9f'];
+const PIPE_KINDS = ['cable', 'fluid pipe', 'item pipe', 'other pipe'];
+const PIPE_LIGHT = { cable: '#c47a00', 'fluid pipe': '#2f6fd6', 'item pipe': '#7a7a7a', 'other pipe': '#b0aca2' };
+const PIPE_DARK = { cable: '#f2a83a', 'fluid pipe': '#6aa0ff', 'item pipe': '#b9b9b9', 'other pipe': '#77746c' };
+const PIPE_SIZE = 0.4;
+const ARM_LENGTH = 0.5 - PIPE_SIZE / 2;
+const HOUR_DAYS = 1 / 24;
+// Minecraft and three.js are both right-handed with y up. Block coordinates are used unchanged: east is +x, north is -z
+const SIDES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(([x, y, z]) => new THREE.Vector3(x, y, z));
+
+const dark = () => {
+  const forced = document.documentElement.dataset.theme;
+  return forced ? forced === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+};
+const tierColor = (tier) => (dark() ? TIER_DARK : TIER_LIGHT)[Math.max(0, TIERS.indexOf(tier))];
+const pipeColor = (kind) => (dark() ? PIPE_DARK : PIPE_LIGHT)[kind];
+const isPipe = (block) => block.kind !== 'machine';
+const keyOf = (b) => `${b.x},${b.y},${b.z}`;
+const centerOf = (b) => new THREE.Vector3(b.x + 0.5, b.y + 0.5, b.z + 0.5);
+
+const fmtIgt = (days) => {
+  const hours = days * 24;
+  return days >= 3 ? `day ${days.toFixed(2)} (${hours.toFixed(1)} h)` : `${hours.toFixed(2)} h`;
+};
+
+const canvas = document.getElementById('scene');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+} catch (err) {
+  document.getElementById('summary').textContent = 'The 3D view needs WebGL, and WebGL is off in this browser. Open the file in a desktop browser with hardware acceleration turned on.';
+  throw err;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.8));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(0.4, 1, 0.6);
+scene.add(sun);
+
+const center = new THREE.Vector3();
+const span = new THREE.Vector3();
+if (BLOCKS.length) {
+  const box = new THREE.Box3();
+  for (const b of BLOCKS) box.expandByPoint(centerOf(b));
+  box.getCenter(center);
+  box.getSize(span);
+}
+// North up aims at the median block, and sizes the view to the middle 80% of blocks on each axis, because outlying
+// blocks can make the bounding box much larger than the base
+const quantile = (values, q) => values.sort((a, b) => a - b)[Math.floor(q * (values.length - 1))] ?? 0;
+const axes = ['x', 'y', 'z'].map((axis) => BLOCKS.map((b) => b[axis] + 0.5));
+const focus = new THREE.Vector3(...axes.map((values) => quantile(values, 0.5)));
+const focusSpan = new THREE.Vector3(...axes.map((values) => quantile(values, 0.9) - quantile(values, 0.1)));
+const radius = Math.max(8, focusSpan.length() / 2);
+camera.far = Math.max(radius, span.length()) * 40;
+// the camera is south of the focus and tilted down, so north is at the top of the screen. The 2D map has north up too
+const northUp = () => {
+  controls.target.copy(focus);
+  camera.position.copy(focus).add(new THREE.Vector3(0, radius * 2.1, radius * 1.5));
+  camera.updateProjectionMatrix();
+  controls.update();
+  scheduleRender();
+};
+// the opening view faces 30° east of north, looks 45° down, and fits every block into the window between its top
+// edge and the timeline. The fit uses at most 5,000 blocks, evenly spaced in the list
+const DEFAULT_HEADING_DEG = 30;
+const ELEVATION_DEG = 45;
+const FIT_STEP = Math.max(1, Math.ceil(BLOCKS.length / 5000));
+const fitPoints = BLOCKS.filter((b, i) => i % FIT_STEP === 0).map(centerOf);
+const screenRight = new THREE.Vector3();
+const screenUpAxis = new THREE.Vector3();
+function frameView(headingDeg) {
+  const heading = THREE.MathUtils.degToRad(headingDeg);
+  const elevation = THREE.MathUtils.degToRad(ELEVATION_DEG);
+  const toTarget = new THREE.Vector3(Math.sin(heading) * Math.cos(elevation), -Math.sin(elevation), -Math.cos(heading) * Math.cos(elevation));
+  camera.position.copy(center).sub(toTarget);
+  camera.lookAt(center);
+  camera.updateMatrixWorld();
+  screenRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  screenUpAxis.setFromMatrixColumn(camera.matrixWorld, 1);
+  // the usable area in normalized device coordinates (-1 to 1): 32 px in from the sides and top, and above the
+  // timeline. The fit is of block centers, so the margin also leaves room for the near half of each block
+  const margin = 32;
+  const timelineTop = document.querySelector('.timeline').getBoundingClientRect().top - margin;
+  const left = -1 + (2 * margin) / innerWidth, right = 1 - (2 * margin) / innerWidth;
+  const top = 1 - (2 * margin) / innerHeight, bottom = 1 - (2 * timelineTop) / innerHeight;
+  const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  // each block as [right, up, toward the target], relative to the center of all blocks
+  const points = fitPoints.map((point) => {
+    const offset = point.clone().sub(center);
+    return [offset.dot(screenRight), offset.dot(screenUpAxis), offset.dot(toTarget)];
+  });
+  if (!points.length) points.push([0, 0, 0]);
+  // a camera at distance d from the target, with the target moved by s along one screen axis, puts a block at
+  // screen coordinate (coordinate - s) / ((depth + d) * scale). The offsets s that keep every block between lo and hi
+  // form an interval, empty when d is too small
+  const offsetRange = (d, axis, lo, hi, scale) => {
+    let min = -Infinity, max = Infinity;
+    for (const point of points) {
+      const depth = point[2] + d;
+      if (depth <= camera.near) return null;
+      min = Math.max(min, point[axis] - hi * scale * depth);
+      max = Math.min(max, point[axis] - lo * scale * depth);
+    }
+    return min <= max ? [min, max] : null;
+  };
+  const fits = (d) => offsetRange(d, 0, left, right, tan * camera.aspect) && offsetRange(d, 1, bottom, top, tan);
+  let far = Math.max(8, span.length());
+  while (!fits(far)) far *= 2;
+  let near = 0;
+  for (let step = 0; step < 40; step++) {
+    const middle = (near + far) / 2;
+    if (fits(middle)) far = middle; else near = middle;
+  }
+  const [x0, x1] = offsetRange(far, 0, left, right, tan * camera.aspect);
+  const [y0, y1] = offsetRange(far, 1, bottom, top, tan);
+  controls.target.copy(center).addScaledVector(screenRight, (x0 + x1) / 2).addScaledVector(screenUpAxis, (y0 + y1) / 2);
+  camera.position.copy(controls.target).addScaledVector(toTarget, -far);
+  camera.updateProjectionMatrix();
+  controls.update();
+  scheduleRender();
+}
+const defaultView = () => frameView(DEFAULT_HEADING_DEG);
+
+const groundSize = Math.ceil(Math.max(span.x, span.z) + 16);
+const ground = new THREE.GridHelper(groundSize, groundSize);
+ground.position.set(Math.round(center.x), Math.floor(center.y - span.y / 2), Math.round(center.z));
+scene.add(ground);
+
+// a face texture is 16 px: the first animation frame of the hull, with the overlays drawn over the frame.
+// Filtering is nearest-neighbor.
+const images = new Map();
+await Promise.all(Object.entries(DATA.textures || {}).map(([path, uri]) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => { images.set(path, img); resolve(); };
+  img.onerror = resolve;
+  img.src = uri;
+})));
+const faceCache = new Map();
+const faceTexture = (base, overlays) => {
+  const key = [base, ...overlays].join('|');
+  if (faceCache.has(key)) return faceCache.get(key);
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  for (const path of [base, ...overlays]) {
+    const img = images.get(path);
+    if (img) g.drawImage(img, 0, 0, img.width, img.width, 0, 0, 16, 16);
+  }
+  const texture = new THREE.CanvasTexture(c);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestMipmapNearestFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  faceCache.set(key, texture);
+  return texture;
+};
+const setMaterials = (set) => {
+  const side = new THREE.MeshLambertMaterial({ map: faceTexture(set.side, set.front) });
+  const top = new THREE.MeshLambertMaterial({ map: faceTexture(set.top, set.topOverlays) });
+  const bottom = new THREE.MeshLambertMaterial({ map: faceTexture(set.bottom, []) });
+  return [side, side, top, bottom, side, side]; // BoxGeometry faces: +x, -x, +y, -y, +z, -z
+};
+const hasTextures = images.size > 0 && BLOCKS.some((b) => b.tex !== null && b.tex !== undefined);
+
+// meshes: machines (one mesh per texture set, or one mesh in tier colors), pipe cores, and pipe arms to joined neighbors
+const machineRows = BLOCKS.filter((b) => !isPipe(b));
+const pipeRows = BLOCKS.filter(isPipe);
+const colorMaterial = new THREE.MeshLambertMaterial();
+const cube = new THREE.BoxGeometry(0.98, 0.98, 0.98);
+const core = new THREE.BoxGeometry(PIPE_SIZE, PIPE_SIZE, PIPE_SIZE);
+const arm = new THREE.BoxGeometry(PIPE_SIZE * 0.8, PIPE_SIZE * 0.8, ARM_LENGTH);
+let groups = [];
+const makeGroup = (rows, geometry, material, colorOf, capacity = rows.length) => {
+  const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, capacity));
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.count = 0;
+  mesh.userData = { rows, colorOf, visible: [] };
+  scene.add(mesh);
+  return mesh;
+};
+let mode = hasTextures ? 'texture' : 'tier';
+let armMesh = null;
+function buildGroups() {
+  for (const mesh of groups) { scene.remove(mesh); mesh.dispose(); }
+  groups = [];
+  if (mode === 'texture') {
+    DATA.textureSets.forEach((set, index) => {
+      const rows = machineRows.filter((b) => b.tex === index);
+      if (rows.length) groups.push(makeGroup(rows, cube, setMaterials(set), null));
+    });
+    const plain = machineRows.filter((b) => b.tex === null || b.tex === undefined);
+    if (plain.length) groups.push(makeGroup(plain, cube, colorMaterial, (b) => tierColor(b.tier)));
+  } else {
+    groups.push(makeGroup(machineRows, cube, colorMaterial, (b) => tierColor(b.tier)));
+  }
+  groups.push(makeGroup(pipeRows, core, colorMaterial, (b) => pipeColor(b.kind)));
+  armMesh = makeGroup([], arm, colorMaterial, (b) => pipeColor(b.kind), pipeRows.length * 6);
+  groups.push(armMesh);
+}
+
+const hiTier = new Set(TIERS.concat(['Not logged', 'No tier']));
+const hiPipe = new Set(PIPE_KINDS);
+let at = DATA.endIgtDays;
+
+const matrix = new THREE.Matrix4();
+const color = new THREE.Color();
+const quaternion = new THREE.Quaternion();
+const unit = new THREE.Vector3(1, 1, 1);
+const zAxis = new THREE.Vector3(0, 0, 1);
+const presentAt = (b, t) => b.placedIgtDays <= t && (b.goneIgtDays === null || b.goneIgtDays > t);
+const shown = (b) => (isPipe(b) ? hiPipe.has(b.kind) : hiTier.has(b.tier));
+
+function place(mesh, visible, matrixOf) {
+  visible.forEach((b, i) => {
+    mesh.setMatrixAt(i, matrixOf(b, i));
+    if (mesh.userData.colorOf) mesh.setColorAt(i, color.set(mesh.userData.colorOf(b)));
+  });
+  mesh.count = visible.length;
+  mesh.userData.visible = visible;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.computeBoundingSphere();
+}
+
+function refresh() {
+  const occupied = new Map();
+  for (const mesh of groups) {
+    if (mesh === armMesh) continue;
+    const visible = mesh.userData.rows.filter((b) => presentAt(b, at) && shown(b));
+    for (const b of visible) occupied.set(keyOf(b), b);
+    place(mesh, visible, (b) => matrix.makeTranslation(b.x + 0.5, b.y + 0.5, b.z + 0.5));
+  }
+  // a pipe joins each neighboring machine and each neighboring pipe of the same kind.
+  // Each pipe of a join gets an arm to the shared face.
+  const arms = [];
+  const armMatrices = [];
+  for (const b of occupied.values()) {
+    if (!isPipe(b)) continue;
+    for (const side of SIDES) {
+      const other = occupied.get(`${b.x + side.x},${b.y + side.y},${b.z + side.z}`);
+      if (!other || (isPipe(other) && other.kind !== b.kind)) continue;
+      quaternion.setFromUnitVectors(zAxis, side);
+      const position = centerOf(b).addScaledVector(side, PIPE_SIZE / 2 + ARM_LENGTH / 2);
+      arms.push(b);
+      armMatrices.push(new THREE.Matrix4().compose(position, quaternion, unit));
+    }
+  }
+  place(armMesh, arms, (b, i) => armMatrices[i]);
+  const machineCount = [...occupied.values()].filter((b) => !isPipe(b)).length;
+  const pipeCount = occupied.size - machineCount;
+  document.getElementById('when').textContent = `IGT ${fmtIgt(at)}`;
+  const lines = [
+    `Current: ${machineCount.toLocaleString()} machines | ${pipeCount.toLocaleString()} pipes`,
+    `Dimension ${DATA.dim}`,
+    `Audit mod ${AUDIT_VERSIONS}`,
+  ];
+  document.getElementById('summary').replaceChildren(...lines.map((text) => Object.assign(document.createElement('span'), { textContent: text })));
+  slider.style.setProperty('--pct', `${(at / Math.max(DATA.endIgtDays, 1e-9)) * 100}%`);
+  hover.hide();
+  scheduleRender();
+}
+
+// timeline: slider values 0 to 1000 are IGT 0 to the end of the run. Play adds one IGT hour every 250 ms
+const slider = document.getElementById('slider');
+const toSlider = (days) => Math.round((days / Math.max(DATA.endIgtDays, 1e-9)) * 1000);
+const setAt = (days) => { at = Math.min(DATA.endIgtDays, Math.max(0, days)); slider.value = toSlider(at); refresh(); };
+slider.addEventListener('input', () => { at = (slider.value / 1000) * DATA.endIgtDays; refresh(); });
+document.getElementById('back').addEventListener('click', () => setAt(at - HOUR_DAYS));
+document.getElementById('fwd').addEventListener('click', () => setAt(at + HOUR_DAYS));
+let playing = null;
+const playButton = document.getElementById('play');
+// drawn icons, centered in the button. A ▶ text glyph sits off center in most fonts
+const PLAY_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.5 L13.5 8 L5 13.5 Z" fill="currentColor"/></svg>';
+const PAUSE_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5 H6.5 V13.5 H3.5 Z M9.5 2.5 H12.5 V13.5 H9.5 Z" fill="currentColor"/></svg>';
+const stop = () => { clearInterval(playing); playing = null; playButton.innerHTML = PLAY_ICON; playButton.setAttribute('aria-label', 'Play'); };
+playButton.addEventListener('click', () => {
+  if (playing) { stop(); return; }
+  if (at >= DATA.endIgtDays) setAt(0);
+  playButton.innerHTML = PAUSE_ICON;
+  playButton.setAttribute('aria-label', 'Pause');
+  playing = setInterval(() => { setAt(at + HOUR_DAYS); if (at >= DATA.endIgtDays) stop(); }, 250);
+});
+
+// look: GT textures or tier colors. The page has textures only when the report run had a GT texture folder
+const modeEl = document.getElementById('mode');
+const showMode = () => modeEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === mode)));
+if (!hasTextures) {
+  modeEl.querySelector('[data-v="texture"]').disabled = true;
+  modeEl.querySelector('[data-v="texture"]').title = 'This report has no GT textures. Textures need a GT5-Unofficial textures/blocks folder when the analyzer runs (--gt-textures).';
+}
+modeEl.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled || b.dataset.v === mode) return;
+  mode = b.dataset.v;
+  showMode();
+  buildGroups();
+  refresh();
+});
+
+// legend: one chip per tier or pipe kind in the run. A click on a chip hides or shows that tier or kind
+const legend = document.getElementById('legend');
+function buildLegend() {
+  legend.textContent = '';
+  const tiers = [...new Set(machineRows.map((b) => b.tier))].sort((a, b) => TIERS.indexOf(a) - TIERS.indexOf(b));
+  const kinds = PIPE_KINDS.filter((k) => pipeRows.some((b) => b.kind === k));
+  const chip = (label, swatch, set, key, pipe) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = pipe ? 'chip pipe' : 'chip';
+    el.setAttribute('aria-pressed', String(set.has(key)));
+    el.innerHTML = `<i style="background:${swatch}"></i>`;
+    el.append(label);
+    el.addEventListener('click', () => {
+      if (set.has(key)) set.delete(key); else set.add(key);
+      el.setAttribute('aria-pressed', String(set.has(key)));
+      refresh();
+    });
+    legend.append(el);
+  };
+  tiers.forEach((t) => chip(t, tierColor(t), hiTier, t, false));
+  kinds.forEach((k) => chip(k, pipeColor(k), hiPipe, k, true));
+}
+
+// compass: the rose turns with the camera heading. The top of the compass is the direction the camera faces.
+// The heading is the level part of the view direction plus the level part of the screen's up direction.
+// The second term gives a heading when the camera looks straight down.
+const rose = document.getElementById('rose');
+const forward = new THREE.Vector3();
+const screenUp = new THREE.Vector3();
+let compassAngle = 0;
+function turnCompass() {
+  camera.getWorldDirection(forward);
+  screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+  const east = forward.x + screenUp.x;
+  const north = -(forward.z + screenUp.z);
+  if (Math.hypot(east, north) > 1e-6) compassAngle = -Math.atan2(east, north) * 180 / Math.PI;
+  rose.setAttribute('transform', `rotate(${compassAngle.toFixed(1)})`);
+}
+document.getElementById('northUp').addEventListener('click', northUp);
+
+// hover: the nearest block under the pointer, in any mesh, gets a tooltip and an outline
+const tip = document.getElementById('tip');
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const outline = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.04, 1.04, 1.04)),
+  new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false }),
+);
+outline.renderOrder = 1;
+outline.visible = false;
+scene.add(outline);
+const hover = {
+  block: null,
+  hide() { this.block = null; outline.visible = false; tip.style.display = 'none'; },
+};
+// for scripted checks in a headless browser
+window.base3d = { hover, setAt, camera, controls, northUp, defaultView, blocks: BLOCKS };
+
+canvas.addEventListener('pointermove', (e) => {
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(groups, false).filter((h) => h.instanceId < h.object.count);
+  if (!hits.length) { hover.hide(); scheduleRender(); return; }
+  const hit = hits[0];
+  const b = hit.object.userData.visible[hit.instanceId];
+  hover.block = b;
+  const size = isPipe(b) ? PIPE_SIZE + 0.06 : 1.04;
+  outline.scale.setScalar(size / 1.04);
+  outline.position.copy(centerOf(b));
+  outline.material.color.set(dark() ? 0xffffff : 0x000000);
+  outline.visible = true;
+  // the log has no survival-mode breaks. A placement with no logged end gets no end line
+  const gone = b.goneIgtDays === null
+    ? []
+    : [`${b.goneBy === 'replaced' ? 'replaced' : 'broken in creative mode'} at IGT ${fmtIgt(b.goneIgtDays)}`];
+  tip.innerHTML = '';
+  // for a tool build, the log has the item in the player's hand (a Matter Manipulator, say), not the placed block
+  const name = document.createElement('b');
+  name.textContent = b.toolBuild ? `Unknown ${isPipe(b) ? 'pipe' : 'machine'}` : b.name;
+  tip.append(name);
+  const lines = [
+    ...(b.toolBuild ? [`The log has the item in hand: ${b.name}`] : []),
+    `${isPipe(b) ? b.kind : b.tier}`,
+    `x ${b.x}, y ${b.y}, z ${b.z}`,
+    `placed at IGT ${fmtIgt(b.placedIgtDays)}`,
+    ...gone,
+  ];
+  for (const line of lines) { const d = document.createElement('div'); d.className = 'm'; d.textContent = line; tip.append(d); }
+  tip.style.display = 'block';
+  const left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
+  const top = Math.min(e.clientY + 14, innerHeight - tip.offsetHeight - 8);
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  scheduleRender();
+});
+canvas.addEventListener('pointerleave', () => { hover.hide(); scheduleRender(); });
+
+// render on demand. While damping moves the camera, draw() schedules the next frame
+let frame = 0;
+function scheduleRender() { if (!frame) frame = requestAnimationFrame(draw); }
+function draw() {
+  frame = 0;
+  const moving = controls.update();
+  renderer.render(scene, camera);
+  turnCompass();
+  if (moving) scheduleRender();
+}
+controls.addEventListener('change', scheduleRender);
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  scheduleRender();
+}
+addEventListener('resize', resize);
+function themeGround() {
+  scene.background = new THREE.Color(getComputedStyle(document.body).backgroundColor);
+  ground.material.color = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue('--grid').trim());
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { themeGround(); buildLegend(); refresh(); });
+
+themeGround();
+resize();
+showMode();
+buildGroups();
+buildLegend();
+defaultView();
+slider.value = 1000;
+refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTNH Runs</title>
+<link rel="icon" href="data:,">
+<meta name="description" content="Submitted GTNH speedruns, each with an in-game time (IGT) 3D progression timelapse of the base.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GTNH runs">
+<meta property="og:url" content="https://orderedset86.github.io/gtnh-runs/">
+<meta property="og:title" content="GTNH Runs">
+<meta property="og:description" content="Submitted GTNH speedruns, each with an in-game time (IGT) 3D progression timelapse of the base.">
+<style>
+/* the landing page of the gtnh-runs site: one table of runs, from runs.json beside this page (scripts/publish_run.py).
+   The design tokens match base_3d_page.html */
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --fg: #1d1d1b; --muted: #66645e; --line: #d8d6cf; --accent: #2a62c9; --grid: #c9c6bd;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #18181a; --panel: #242427; --fg: #ececea; --muted: #a3a29c; --line: #3a3a3e; --accent: #7aa7ff; --grid: #3d3d42;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #18181a; --panel: #242427; --fg: #ececea; --muted: #a3a29c; --line: #3a3a3e; --accent: #7aa7ff; --grid: #3d3d42;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+/* minmax(0, 1fr): a wide table scrolls inside its frame instead of widening the page */
+main { max-width: 960px; margin: 0 auto; padding: 32px 16px 24px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+h1 { margin: 0; font-size: 22px; font-weight: 650; }
+.lede { margin: 4px 0 0; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.controls label { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.table-wrap { position: relative; overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+th button { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+th[aria-sort] button::after { content: '▾'; color: var(--fg); }
+th[aria-sort="ascending"] button::after { content: '▴'; }
+td.num, th.num { text-align: right; }
+th.num button { justify-content: flex-end; }
+a { color: var(--accent); }
+a.open { font-weight: 600; text-decoration: none; }
+a.open:hover { text-decoration: underline; }
+.empty { padding: 16px 12px; color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>GTNH Runs</h1>
+    <p class="lede">Submitted GregTech: New Horizons speedruns. Each run has an in-game time (IGT) 3D progression timelapse of its base.</p>
+  </header>
+  <div class="controls">
+    <label>Category <select id="category"><option value="">All</option></select></label>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-key="endDate" aria-sort="descending"><button type="button">End date</button></th>
+          <th data-key="runner"><button type="button">Runner</button></th>
+          <th data-key="milestone"><button type="button">Category</button></th>
+          <th data-key="milestoneIgtDays" class="num"><button type="button">IGT at milestone</button></th>
+          <th data-key="audit"><button type="button">Audit mod</button></th>
+          <th><span class="sr">Timelapse</span></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden></div>
+  </div>
+  <footer>End date is the UTC date on which the run first reached its category's milestone. Block textures are from <a href="https://github.com/GTNewHorizons/GT5-Unofficial">GT5-Unofficial</a> (LGPL-3.0).</footer>
+</main>
+<script>
+// rows come from runs.json, written by scripts/publish_run.py. The category filter is kept in the URL (?category=Moon)
+const select = document.getElementById('category');
+const rowsEl = document.getElementById('rows');
+const emptyEl = document.getElementById('empty');
+const countEl = document.getElementById('count');
+const headers = [...document.querySelectorAll('th[data-key]')];
+let runs = [];
+let sortKey = 'endDate';
+let descending = true;
+
+const fmtIgt = (days) => (days >= 3 ? `day ${days.toFixed(2)} (${(days * 24).toFixed(1)} h)` : `${(days * 24).toFixed(2)} h`);
+const sortValue = (run, key) => {
+  if (key === 'runner') return run.runners.join(', ').toLowerCase();
+  if (key === 'audit') return run.auditVersions.at(-1) ?? '';
+  return run[key];
+};
+
+function render() {
+  const category = select.value;
+  const shown = runs.filter((run) => !category || run.milestone === category);
+  shown.sort((a, b) => {
+    const x = sortValue(a, sortKey), y = sortValue(b, sortKey);
+    const order = x < y ? -1 : x > y ? 1 : 0;
+    return descending ? -order : order;
+  });
+  rowsEl.replaceChildren(...shown.map((run) => {
+    const tr = document.createElement('tr');
+    const cells = [run.endDate, run.runners.join(', '), run.milestone, fmtIgt(run.milestoneIgtDays), run.auditVersions.join(', then ')];
+    cells.forEach((text, i) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      if (i === 3) td.className = 'num';
+      tr.append(td);
+    });
+    const link = document.createElement('a');
+    link.className = 'open';
+    link.href = run.path;
+    link.textContent = 'Open timelapse';
+    const td = document.createElement('td');
+    td.append(link);
+    tr.append(td);
+    return tr;
+  }));
+  countEl.textContent = `${shown.length} ${shown.length === 1 ? 'run' : 'runs'}`;
+  emptyEl.hidden = shown.length > 0;
+  emptyEl.textContent = 'No runs in this category.';
+  for (const th of headers) {
+    if (th.dataset.key === sortKey) th.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+    else th.removeAttribute('aria-sort');
+  }
+}
+
+for (const th of headers) {
+  th.querySelector('button').addEventListener('click', () => {
+    if (sortKey === th.dataset.key) descending = !descending;
+    // a new column sorts A to Z and low to high, except dates, newest first
+    else { sortKey = th.dataset.key; descending = sortKey === 'endDate'; }
+    render();
+  });
+}
+select.addEventListener('change', () => {
+  const url = new URL(location.href);
+  if (select.value) url.searchParams.set('category', select.value); else url.searchParams.delete('category');
+  history.replaceState(null, '', url);
+  render();
+});
+
+fetch('runs.json')
+  .then((response) => { if (!response.ok) throw new Error(`runs.json: HTTP ${response.status}`); return response.json(); })
+  .then((loaded) => {
+    runs = loaded;
+    for (const category of [...new Set(runs.map((run) => run.milestone))].sort()) {
+      select.append(new Option(category, category));
+    }
+    const wanted = new URL(location.href).searchParams.get('category');
+    if (wanted && runs.some((run) => run.milestone === wanted)) select.value = wanted;
+    render();
+  })
+  .catch(() => {
+    emptyEl.hidden = false;
+    emptyEl.textContent = 'The run list (runs.json) did not load. Open this page from the website, not from a file on disk.';
+  });
+</script>
+</body>
+</html>
