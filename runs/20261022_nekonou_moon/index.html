@@ -9,7 +9,7 @@
 <meta property="og:url" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/">
 <meta property="og:title" content="NekoNou: Moon">
 <meta property="og:description" content="In-game time (IGT) 3D progression timelapse. Reached Moon at 19.54 h IGT.">
-<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=b18de640728b">
+<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=23c20ca329fe">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -60,13 +60,13 @@ button.plain:hover { background: var(--grid); }
 .time #play { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .time #play svg { display: block; }
 .time output { font-variant-numeric: tabular-nums; min-width: 12ch; font-size: 15px; }
-/* the seek bar: a square-edged track as tall as the buttons, filled up to the selected time (--pct, set by
-   refresh()), with a bar-shaped handle */
-#slider { flex: 1 1 200px; min-width: 120px; height: 36px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; --pct: 100%; }
-#slider::-webkit-slider-runnable-track { height: 36px; border-radius: 0; background: linear-gradient(to right, var(--accent) var(--pct), var(--grid) var(--pct)); }
+/* the seek bar: a square-edged track as tall as the buttons, filled up to the selected time in tier colors
+   (--track, set by refresh()), with a bar-shaped handle */
+#slider { flex: 1 1 200px; min-width: 120px; height: 36px; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; --track: var(--grid); }
+#slider::-webkit-slider-runnable-track { height: 36px; border-radius: 0; background: var(--track); }
 #slider::-webkit-slider-thumb { -webkit-appearance: none; width: 8px; height: 36px; border-radius: 0; background: var(--fg); }
-#slider::-moz-range-track { height: 36px; border-radius: 0; background: var(--grid); }
-#slider::-moz-range-progress { height: 36px; border-radius: 0; background: var(--accent); }
+#slider::-moz-range-track { height: 36px; border-radius: 0; background: var(--track); }
+#slider::-moz-range-progress { background: transparent; }
 #slider::-moz-range-thumb { width: 8px; height: 36px; border: 0; border-radius: 0; background: var(--fg); }
 #slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .limits { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 6px; }
@@ -274,7 +274,7 @@ function frameView(headingDeg) {
   // the usable area in normalized device coordinates (-1 to 1): 32 px in from the sides and top, and above the
   // timeline. The fit is of block centers, so the margin also leaves room for the near half of each block
   const margin = 32;
-  // a hidden timeline, as in the link-preview image of scripts/publish_run.py, leaves the whole height
+  // a hidden timeline leaves the whole height
   const timeline = document.querySelector('.timeline');
   const timelineTop = (timeline.checkVisibility() ? timeline.getBoundingClientRect().top : innerHeight) - margin;
   const left = -1 + (2 * margin) / innerWidth, right = 1 - (2 * margin) / innerWidth;
@@ -360,6 +360,26 @@ const hasTextures = images.size > 0 && BLOCKS.some((b) => b.tex !== null && b.te
 
 // meshes: machines (one mesh per texture set, or one mesh in tier colors), pipe cores, and pipe arms to joined neighbors
 const machineRows = BLOCKS.filter((b) => !isPipe(b));
+// the seek bar's fill, as in the tier GIF of run_report.timelapse: from each time on, the color of the highest tier
+// placed by then. Stone is the lowest tier that counts. Before the first, the fill is muted
+const tierSteps = [];
+for (const b of [...machineRows].sort((x, y) => x.placedIgtDays - y.placedIgtDays)) {
+  const rank = TIERS.indexOf(b.tier);
+  if (rank > (tierSteps.at(-1)?.rank ?? -1)) tierSteps.push({ rank, days: b.placedIgtDays });
+}
+function trackFill(days) {
+  const pct = (value) => `${((value / Math.max(DATA.endIgtDays, 1e-9)) * 100).toFixed(3)}%`;
+  const css = getComputedStyle(document.documentElement);
+  const steps = [{ color: css.getPropertyValue('--muted').trim(), days: 0 }]
+    .concat(tierSteps.map((step) => ({ color: tierColor(TIERS[step.rank]), days: step.days })));
+  const stops = [];
+  steps.forEach((step, i) => {
+    const end = Math.min(steps[i + 1]?.days ?? Infinity, days);
+    if (step.days < days) stops.push(`${step.color} ${pct(step.days)} ${pct(end)}`);
+  });
+  stops.push(`${css.getPropertyValue('--grid').trim()} ${pct(days)} 100%`);
+  return `linear-gradient(to right, ${stops.join(', ')})`;
+}
 const pipeRows = BLOCKS.filter(isPipe);
 const colorMaterial = new THREE.MeshLambertMaterial();
 const cube = new THREE.BoxGeometry(0.98, 0.98, 0.98);
@@ -451,7 +471,7 @@ function refresh() {
     `Audit mod ${AUDIT_VERSIONS}`,
   ];
   document.getElementById('summary').replaceChildren(...lines.map((text) => Object.assign(document.createElement('span'), { textContent: text })));
-  slider.style.setProperty('--pct', `${(at / Math.max(DATA.endIgtDays, 1e-9)) * 100}%`);
+  slider.style.setProperty('--track', trackFill(at));
   hover.hide();
   scheduleRender();
 }
