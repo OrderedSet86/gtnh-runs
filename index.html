@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GTNH Runs</title>
-<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=05a83fc07f0d">
+<meta property="og:image" content="https://orderedset86.github.io/gtnh-runs/runs/20261022_nekonou_moon/preview.jpg?v=a110fd5341fb">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -56,7 +56,10 @@ a.open { font-weight: 600; text-decoration: none; }
 a.open:hover { text-decoration: underline; }
 .empty { padding: 16px 12px; color: var(--muted); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-footer { color: var(--muted); font-size: 12px; }
+footer { color: var(--muted); font-size: 12px; display: grid; gap: 6px; }
+footer p { margin: 0; }
+footer summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+footer ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 </style>
 </head>
 <body>
@@ -85,7 +88,18 @@ footer { color: var(--muted); font-size: 12px; }
     </table>
     <div class="empty" id="empty" hidden></div>
   </div>
-  <footer>End date is the UTC date on which the run first reached its category's milestone. Block textures are from <a href="https://github.com/GTNewHorizons/GT5-Unofficial">GT5-Unofficial</a> (LGPL-3.0).</footer>
+  <footer>
+    <p>End date is the UTC date on which the run first reached its category's milestone.</p>
+    <details>
+      <summary>Credits</summary>
+      <ul>
+        <li>Block textures from <a href="https://github.com/GTNewHorizons/GT5-Unofficial">GT5-Unofficial</a> (LGPL-3.0).</li>
+        <li>Vending Machine textures © 2025 cubefury, from <a href="https://github.com/GTNewHorizons/VendingMachine">VendingMachine</a> (MIT).</li>
+        <li>Player skins from each player's Minecraft account.</li>
+        <li>Armor textures from Minecraft and from the mod that adds each piece.</li>
+      </ul>
+    </details>
+  </footer>
 </main>
 <script>
 // rows come from runs.json, written by scripts/publish_run.py. The category filter is kept in the URL (?category=Moon)
